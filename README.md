@@ -263,7 +263,3 @@ Add a job after your migration step:
 Feel free to open issues for bugs or feature requests.
 
 ---
-
-## 🙏 Acknowledgements
-
-Inspired by classic xUnit patterns, but distilled for
