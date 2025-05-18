@@ -29,7 +29,12 @@ Simply execute the included **install.sql** script in the database you want to t
 :r install.sql
 ```
 
-The script creates two schemas:
+The script will:
+
+1. **Create two schemas** that hold the framework internals and your tests (see table below).
+2. \*\*Immediately execute \*\***`EXEC test.run`** at the end, running the built‑in sanity checks bundled with T‑TEST.
+   You’ll see a short summary like `INFO: 4 self‑tests executed. Succeeded: 4, failed: 0`—proof the installation is good.
+   Feel free to comment out that line inside *install.sql* if you want to postpone the first run.
 
 | Schema  | Purpose                                                |
 | ------- | ------------------------------------------------------ |
@@ -84,7 +89,7 @@ Any uncaught exception fails the test automatically.
 
 T‑TEST provides two convenient ways to execute your tests:
 
-1. \*\*Via the runner – \*\***`test.run`**
+1. Via the runner **\[test].\[run]**
 2. **By calling the test procedure directly**
 
 #### 1. Using `test.run`
