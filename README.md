@@ -32,7 +32,7 @@ Simply execute the included **install.sql** script in the database you want to t
 The script will:
 
 1. **Create two schemas** that hold the framework internals and your tests (see table below).
-2. \*\*Immediately execute \*\***`EXEC test.run`** at the end, running the built‑in sanity checks bundled with T‑TEST.
+2. Immediately execute **\[test].\[run]** at the end, running the built‑in sanity checks bundled with T‑TEST.
    You’ll see a short summary like `INFO: 4 self‑tests executed. Succeeded: 4, failed: 0`—proof the installation is good.
    Feel free to comment out that line inside *install.sql* if you want to postpone the first run.
 
@@ -240,14 +240,13 @@ BEGIN TRAN
 ROLLBACK;
 ```
 
-````
-
 ---
 
 ## 🧪 Implementation tricks
 
 ### 1. **Assertions as inline functions**
-T‑TEST ships every helper (`test.assert_equals`, `test.assert_error_like`, `test.fail`, …) as a **scalar function**, not a stored procedure.  
+
+T‑TEST ships every helper (`test.assert_equals`, `test.assert_error_like`, `test.fail`, …) as a **scalar function**, not a stored procedure.
 Why this matters:
 
 * You can embed assertions directly into `SELECT` lists or `WHERE` clauses.
@@ -261,8 +260,9 @@ SELECT test.assert_equals('Rows must match',
 ```
 
 ### 2. **Throwing from a function**
-SQL Server normally disallows `RAISERROR` or `THROW` inside a scalar function.  
-T‑TEST sidesteps this by **casting the error message to `int`** and returning it; the caller interprets a non‑NULL return as an exception:
+
+SQL Server normally disallows `RAISERROR` or `THROW` inside a scalar function.
+T‑TEST sidesteps this by \*\*casting the error message to \*\***`int`** and returning it; the caller interprets a non‑NULL return as an exception:
 
 ```sql
 RETURN CAST(LEFT(@error_message, 4000) AS int); -- inside test.throw_error()
@@ -271,35 +271,63 @@ RETURN CAST(LEFT(@error_message, 4000) AS int); -- inside test.throw_error()
 Because the test runner checks the return value, any failure bubbles up as a real SQL exception.
 
 ### 3. **Order‑independent JSON comparison**
+
 `test.normalize_json` serialises JSON into a binary blob where:
+
 * Array items are sorted alphabetically before hashing.
 * Dates and decimals are normalised to canonical formats.
 
 This lets `test.assert_equals` treat `{ "a":1, "b":2 }` and `{ "b":2, "a":1 }` (or out‑of‑order arrays) as equal.
 
 ### 4. **Auto‑discovering tests via a view**
+
 The view `[test].[test]` parses procedure names in the `tests` schema to locate:
+
 * The **tested object** (`schema.object`).
 * An optional **action tag** after `@`.
 
 No extra metadata tables are needed; naming convention = registration.
 
-### 5. **Fail‑fast counter**
-`test.run` tracks how many failures you’ve had and stops executing new tests once `@limit_failed` reaches zero – a simple way to shorten feedback loops.
+### 5. **Sentinel‑style exception testing**
+
+A concise pattern for verifying that a call *does* raise the expected error and that the error’s properties are correct.
+
+1. **Act** – run the statement expected to fail.
+2. **Sentinel** – `EXEC test.error;` immediately after: if no error occurred the test aborts right here.
+3. **Assert** – inside `CATCH` use any combo of `test.assert_error_number`, `test.assert_error_like`, or custom checks.
+
+```sql
+BEGIN TRY
+    EXEC sales.usp_create_order @customer_id = -1;  -- (1) act
+    EXEC test.error;                               -- (2) sentinel
+END TRY
+BEGIN CATCH                                         -- (3) assert
+    SELECT test.assert_error_number('Must raise 50001', 50001);
+    SELECT test.assert_error_like('Message must mention invalid customer', '%invalid customer%');
+END CATCH;
+```
+
+**Why it’s neat**
+
+* **Pure T‑SQL**—no CLR interception or internal flags.
+* **Granular**—assert any part of the error record, even run extra queries in the `CATCH`.
+* **Transparent**—you control the flow; unlike `tSQLt.ExpectException`, the logic is visible and customisable.
+
+*Quick comparison to tSQLt*: with `tSQLt.ExpectException` you declare expectations **before** the call and rely on the framework’s hidden interception. T‑TEST’s sentinel style is a few lines longer but offers richer assertions and works on servers where CLR is disabled.
 
 ---
 
 ## 🛠 Assertion toolbox
 
-| Helper                                      | Purpose                                                        | Example                                                               |
-| ------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `test.assert_equals(msg, expected, actual)` | smart equality check (numbers, JSON, etc.)                     | `test.assert_equals('Should be 42', '42', @val)`                      |
-| `test.assert_error_like(msg, pattern)`      | assert previously raised error message                         | `test.assert_error_like('Should complain about PK', '%PRIMARY KEY%')` |
-| `test.assert_error_number(msg, expected_number)` | assert error **number** inside CATCH block                     | `test.assert_error_number('Should raise 50001', 50001)` |
-| `test.assert_not_null(msg, value)`          | value **must** be NOT NULL                                     |                                                                       |
-| `test.assert_null(msg, value)`              | value **must** be NULL                                         |                                                                       |
-| `test.fail(msg)`                            | fail immediately, you can add your conditions in WHERE section | SELECT `test.fail('Not implemented')` WHERE IsAdmin(@my\_profile) = 0 |
-|                                             |                                                                |                                                                       |
+| Helper                                           | Purpose                                                        | Example                                                               |
+| ------------------------------------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `test.assert_equals(msg, expected, actual)`      | smart equality check (numbers, JSON, etc.)                     | `test.assert_equals('Should be 42', '42', @val)`                      |
+| `test.assert_error_like(msg, pattern)`           | assert previously raised error message                         | `test.assert_error_like('Should complain about PK', '%PRIMARY KEY%')` |
+| `test.assert_error_number(msg, expected_number)` | assert error **number** inside CATCH block                     | `test.assert_error_number('Should raise 50001', 50001)`               |
+| `test.assert_not_null(msg, value)`               | value **must** be NOT NULL                                     |                                                                       |
+| `test.assert_null(msg, value)`                   | value **must** be NULL                                         |                                                                       |
+| `test.fail(msg)`                                 | fail immediately, you can add your conditions in WHERE section | SELECT `test.fail('Not implemented')` WHERE IsAdmin(@my\_profile) = 0 |
+|                                                  |                                                                |                                                                       |
 
 ---
 
@@ -314,7 +342,7 @@ EXEC test.run
       @limit_failed       = 5,              -- stop after 5 failures
       @before_callback    = N'SET NOCOUNT ON',
       @log_proc_name      = N'test.log';
-````
+```
 
 | Parameter                       | Default      | Description                                                         |
 | ------------------------------- | ------------ | ------------------------------------------------------------------- |
