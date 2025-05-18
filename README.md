@@ -10,8 +10,8 @@ A **lightweight, pure‑T‑SQL unit‑testing framework** for SQL Server. Drop
 * **Self‑discovering tests**: every procedure in the `tests` schema is a test.
 * **Rich assertions**:
 
-  * smart equality (`NULL`, numbers, dates, JSON – order‑insensitive)
-  * error pattern matching
+  * smart equality (recordsets, `NULL`, numbers, dates, JSON)
+  * exception pattern matching
   * null / not‑null shortcuts
 * **Transactional isolation** – write tests as `BEGIN TRAN / ROLLBACK` so production data is never touched.
 * **Minimal footprint** – just helper functions in `test` schema and a view + runner.
@@ -234,6 +234,51 @@ ROLLBACK;
 ```
 
 ````
+
+---
+
+## 🧪 Implementation tricks
+
+### 1. **Assertions as inline functions**
+T‑TEST ships every helper (`test.assert_equals`, `test.assert_error_like`, `test.fail`, …) as a **scalar function**, not a stored procedure.  
+Why this matters:
+
+* You can embed assertions directly into `SELECT` lists or `WHERE` clauses.
+* Functions accept *expressions* and *sub‑queries* as arguments. Example: pass an on‑the‑fly recordset as JSON without staging it in a temp table.
+* Classic procedure‑style helpers (like in tSQLt) would force extra variables / temp objects.
+
+```sql
+SELECT test.assert_equals('Rows must match',
+        (SELECT * FROM @expected FOR JSON PATH),
+        (SELECT * FROM dbo.get_users() FOR JSON PATH));
+```
+
+### 2. **Throwing from a function**
+SQL Server normally disallows `RAISERROR` or `THROW` inside a scalar function.  
+T‑TEST sidesteps this by **casting the error message to `int`** and returning it; the caller interprets a non‑NULL return as an exception:
+
+```sql
+RETURN CAST(LEFT(@error_message, 4000) AS int); -- inside test.throw_error()
+```
+
+Because the test runner checks the return value, any failure bubbles up as a real SQL exception.
+
+### 3. **Order‑independent JSON comparison**
+`test.normalize_json` serialises JSON into a binary blob where:
+* Array items are sorted alphabetically before hashing.
+* Dates and decimals are normalised to canonical formats.
+
+This lets `test.assert_equals` treat `{ "a":1, "b":2 }` and `{ "b":2, "a":1 }` (or out‑of‑order arrays) as equal.
+
+### 4. **Auto‑discovering tests via a view**
+The view `[test].[test]` parses procedure names in the `tests` schema to locate:
+* The **tested object** (`schema.object`).
+* An optional **action tag** after `@`.
+
+No extra metadata tables are needed; naming convention = registration.
+
+### 5. **Fail‑fast counter**
+`test.run` tracks how many failures you’ve had and stops executing new tests once `@limit_failed` reaches zero – a simple way to shorten feedback loops.
 
 ---
 
