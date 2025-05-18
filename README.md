@@ -171,7 +171,7 @@ BEGIN TRAN
     EXEC @result = math.add @a = 20, @b = 22;
 
     -- Should return 42
-    SELECT test.assert_equals('20 + 22 must be 42', '42', CAST(@result AS nvarchar(max)));
+    SELECT test.assert_equals('20 + 22 must be 42', '42', @result);
 ROLLBACK;
 ```
 
@@ -261,16 +261,19 @@ SELECT test.assert_equals('Rows must match',
 
 ### 2. **Throwing from a function**
 
-SQL Server normally disallows `RAISERROR` or `THROW` inside a scalar function.
-T‑TEST sidesteps this by \*\*casting the error message to \*\***`int`** and returning it; the caller interprets a non‑NULL return as an exception:
+SQL Server forbids `RAISERROR` / `THROW` inside scalar UDFs. T‑TEST sneaks around this rule with a type‑mismatch trick:
 
 ```sql
-RETURN CAST(LEFT(@error_message, 4000) AS int); -- inside test.throw_error()
+RETURN CAST(LEFT(@error_message, 4000) AS int);  -- inside test.throw_error()
 ```
 
-Because the test runner checks the return value, any failure bubbles up as a real SQL exception.
+* The function is declared to return **`int`**, but `@error_message` is almost never a valid integer.
+* The forced `CAST` raises conversion error **245** (`Conversion failed when converting the nvarchar value … to data type int`).
+* That error propagates just like a normal `THROW`, so the outer `TRY…CATCH` (or the framework runner) can handle it.
 
-### 3. **Order‑independent JSON comparison**
+No special flags or return‑value checks—SQL Server itself turns the failed cast into a real exception.
+
+### 3. **Order‑independent JSON comparison** **Order‑independent JSON comparison**
 
 `test.normalize_json` serialises JSON into a binary blob where:
 
@@ -288,7 +291,13 @@ The view `[test].[test]` parses procedure names in the `tests` schema to locate:
 
 No extra metadata tables are needed; naming convention = registration.
 
-### 5. **Sentinel‑style exception testing**
+```sql
+-- list all registered tests with their target objects and parsed metadata
+SELECT *
+FROM   test.test;
+```
+
+### 5. **Sentinel‑style exception testing** **Sentinel‑style exception testing**
 
 A concise pattern for verifying that a call *does* raise the expected error and that the error’s properties are correct.
 
