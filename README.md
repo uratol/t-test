@@ -135,21 +135,26 @@ Perfect for quick debugging and exploratory runs.
 
 ## 🔒 Transactions: when to wrap and when to skip
 
-Most T‑TEST samples begin with `BEGIN TRAN … ROLLBACK`. **Why?**
+### Why wrap in `BEGIN TRAN … ROLLBACK`
 
-1. **Run individual tests ad‑hoc** – You can execute a single test procedure in SSMS and be sure nothing sticks in the database after the rollback.
-2. **Keep CI databases clean** – The test runner doesn’t need to issue explicit rollbacks; each test is self‑contained.
-3. **Isolation = repeatability** – Data written by one test never pollutes the next run.
+1. **Run the test ad‑hoc** – simply `EXEC [tests].[…]` and the transaction guarantees nothing sticks; perfect for quick debugging.
+2. **Automatic cleanup** – no teardown code needed; the rollback wipes inserts, updates, temp tables, and even sequence increments.
+3. **Deterministic, repeatable runs** – each execution starts from the same state, avoiding flaky tests caused by leftover data.
+4. **Safety in shared dev databases** – parallel testers can run suites concurrently without clobbering each other’s data.
 
-### When *not* to start a manual transaction
+### When *not* to wrap
 
-Some behaviours depend on a real commit:
+Some behaviours rely on a *real commit* and therefore **must run outside a manual transaction**:
 
-* **Service Broker conversations** – activation procedures, queue processing, and message delivery only fire after the outer transaction commits.
-* **SQL Agent jobs / sp\_start\_job** – the job executes in a separate session; wrapping the call in a transaction may postpone it indefinitely.
-* **Trigger / CDC / replication side‑effects** – if your assertion needs to observe them *after* commit.
+* **Service Broker** – message delivery, queue activation, and conversation state changes happen only after the outer transaction commits.
+* **SQL Agent jobs / sp\_start\_job** – the job fires in another session; holding a transaction open can delay or block its execution.
+* **Commit‑driven features** – triggers that enqueue work to other systems, Change Data Capture, replication, Query Notifications.
+* **Cross‑session concurrency tests** – scenarios where one connection must commit so another can observe locks or row versions.
 
-For such scenarios simply omit `BEGIN TRAN` / `ROLLBACK` and let your test clean up explicitly or run against disposable test data.
+In those cases, omit `BEGIN TRAN / ROLLBACK` and either:
+
+* Run against disposable test data, or
+* Add explicit cleanup at the end of the test.
 
 ---
 
