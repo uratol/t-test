@@ -225,7 +225,7 @@ BEGIN TRAN
 ROLLBACK;
 ```
 
-### 4. Inline `test.fail` inside a `WHERE` clause Inline `test.fail` inside a `WHERE` clause
+### 4. Inline `test.fail` inside a `WHERE` clause
 
 ```sql
 CREATE OR ALTER PROCEDURE [tests].[security.is_admin@assert_role]
@@ -267,7 +267,7 @@ SQL Server forbids `RAISERROR` / `THROW` inside scalar UDFs. T‑TEST sneaks ar
 RETURN CAST(LEFT(@error_message, 4000) AS int);  -- inside test.throw_error()
 ```
 
-* The function is declared to return **`int`**, but `@error_message` is almost never a valid integer.
+* The function is declared to return **int**, but `@error_message` is almost never a valid integer.
 * The forced `CAST` raises conversion error **245** (`Conversion failed when converting the nvarchar value … to data type int`).
 * That error propagates just like a normal `THROW`, so the outer `TRY…CATCH` (or the framework runner) can handle it.
 
@@ -297,7 +297,7 @@ SELECT *
 FROM   test.test;
 ```
 
-### 5. **Sentinel‑style exception testing** **Sentinel‑style exception testing**
+### 5. **Sentinel‑style exception testing**
 
 A concise pattern for verifying that a call *does* raise the expected error and that the error’s properties are correct.
 
@@ -395,16 +395,16 @@ Add a job after your migration step:
 
 ## 🔄 T-TEST vs. tSQLt
 
-| Area                                       | T-TEST                                                                                                                                                                                                                            | tSQLt                                                                                                                                                               | Take‑away                                                                                     |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Installation size**                      | single script, < 10 KB of objects in `test` & `tests` schemas                                                                                                                                                                     | \~700 KB, dozens of objects spread across multiple helper schemas (`tSQLt`, `tSQLtPrivate`, etc.)                                                                   | T-TEST is tiny & vendor‑free; tSQLt is feature‑rich but heavy                                 |
-| **How recordsets are compared**            | `test.assert_equals` does *smart* binary/JSON/decimal equality – often one line                                                                                                                                                   | `tSQLt.AssertEqualsTable` requires creating an *expected* table variable and `tSQLt.ExpectResultSets` with XML                                                      | T-TEST is terser; tSQLt is explicit but verbose                                               |
-| **Service Broker & SQL Agent job testing** | Works seamlessly: each test opens its own `BEGIN TRAN` so dialogs, job runs, messages happen inside the same transaction and are rolled back                                                                                      | Standard pattern uses `EXEC tSQLt.NewTestClass` which wraps an *outer* transaction; Service Broker & job threads run **outside** it, often making assertions tricky | T-TEST 🟢; tSQLt requires extra harness or disabling transactions                             |
-| **Test classification**                    | Test procedure name encodes target: `[tests].[schema.object@scenario]` ⇒ quick filtering by schema/object                                                                                                                         | Uses *test classes* (schemas) + procedure name – extra level, but cleaner separation                                                                                | Depends on taste; T-TEST needs no helper commands to create classes                           |
-| **Execution flexibility**                  | `test.run` accepts *include / exclude* lists, schema filters, fail‑fast limit, callback hook                                                                                                                                      | `EXEC tSQLt.Run` runs all or a single class; finer filtering requires PowerShell or wrapper scripts                                                                 | T-TEST offers more granular selection out‑of‑the‑box                                          |
-| **Helpers & exception handling**           | Helpers are **functions** – they can be called inline (`SELECT test.assert_equals(...)`) and accept expressions / sub‑queries as parameters. Dedicated `test.error` & pattern‑based `test.assert_error_like` for error validation | Helpers are *procedures*. Need temp tables / variables for passing data; exception tests rely on `tSQLt.ExpectException` with hard‑coded numbers                    | Functions inline ⇒ less boilerplate. tSQLt procedures support output capture but add ceremony |
-| **Mocking / Isolation**                    | Uses your own `BEGIN TRAN / ROLLBACK`; no automatic fake tables                                                                                                                                                                   | Rich mocking: fake tables, spy procedures, `tSQLt.FakeTable`, `tSQLt.SpyProcedure`                                                                                  | tSQLt wins for complex mocks                                                                  |
-| **Dependencies**                           | None (pure T‑SQL)                                                                                                                                                                                                                 | CLR enabled (for NUnit‑style output) on older versions, external installer                                                                                          | T-TEST easier on locked‑down servers                                                          |
+| Area                                       | T-TEST                                                                                                                                                                                                                             | tSQLt                                                                                                                                                               | Take‑away                                                                                     |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **Installation size**                      | single script, < 10 KB of objects in `test` & `tests` schemas                                                                                                                                                                      | \~700 KB, dozens of objects spread across multiple helper schemas (`tSQLt`, `tSQLtPrivate`, etc.)                                                                   | T-TEST is tiny & vendor‑free; tSQLt is feature‑rich but heavy                                 |
+| **How recordsets are compared**            | `test.assert_equals` does *smart* binary/JSON/decimal equality – often one line                                                                                                                                                    | `tSQLt.AssertEqualsTable` requires creating an *expected* table variables                                                                                           | T-TEST is terser; tSQLt is explicit but verbose                                               |
+| **Service Broker & SQL Agent job testing** | Works seamlessly: each test opens its own `BEGIN TRAN` so dialogs, job runs, messages happen inside the same transaction and are rolled back                                                                                       | Standard pattern uses `EXEC tSQLt.NewTestClass` which wraps an *outer* transaction; Service Broker & job threads run **outside** it, often making assertions tricky | T-TEST 🟢; tSQLt requires extra harness or disabling transactions                             |
+| **Test classification**                    | Test procedure name encodes target: `[tests].[schema.object@scenario]` ⇒ quick filtering by schema/object                                                                                                                          | Uses *test classes* (schemas) + procedure name – extra level, but cleaner separation                                                                                | Depends on taste; tSQLt needs no helper commands to create classes                            |
+| **Execution flexibility**                  | `test.run` accepts *include / exclude* lists, schema filters, fail‑fast limit, callback hook                                                                                                                                       | `EXEC tSQLt.Run` runs all or a single class; finer filtering requires PowerShell or wrapper scripts                                                                 | T-TEST offers more granular selection out‑of‑the‑box                                          |
+| **Helpers & exception handling**           | Helpers are **functions** – they can be called inline (`SELECT test.assert_equals(...)`) and accept expressions / sub‑queries as parameters. Dedicated `test.error` & pattern‑based `test.assert_error_like` for exception testing | Helpers are *procedures*. Need temp tables / variables for passing data; exception tests rely on `tSQLt.ExpectException` with hard‑coded numbers                    | Functions inline ⇒ less boilerplate. tSQLt procedures support output capture but add ceremony |
+| **Mocking / Isolation**                    | Uses your own `BEGIN TRAN / ROLLBACK`; no automatic fake tables                                                                                                                                                                    | Rich mocking: fake tables, spy procedures, `tSQLt.FakeTable`, `tSQLt.SpyProcedure`                                                                                  | tSQLt wins for complex mocks                                                                  |
+| **Dependencies**                           | None (pure T‑SQL)                                                                                                                                                                                                                  | CLR enabled (for NUnit‑style output) on older versions, external installer                                                                                          | T-TEST easier on locked‑down servers                                                          |
 
 **When to prefer T-TEST**
 
@@ -428,12 +428,10 @@ Add a job after your migration step:
 ## 🤝 Contributing
 
 1. Fork / create a feature branch.
-2. Add or update tests inside `tests` schema.
+2. Add or update objects in `test` schema, add tests inside `tests` schema.
 3. Ensure `EXEC test.run` passes.
 4. Submit a PR.
 
 Feel free to open issues for bugs or feature requests.
 
 ---
-
-##
