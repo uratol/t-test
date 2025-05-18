@@ -198,7 +198,7 @@ BEGIN TRAN
 ROLLBACK;
 ```
 
-### 3. Exception handling (real object)
+### 3. Exception testing
 
 ```sql
 CREATE OR ALTER PROCEDURE [tests].[sales.usp_create_order@invalid_customer]
@@ -207,10 +207,12 @@ BEGIN TRAN
     BEGIN TRY
         -- Call the object under test which is *expected* to raise
         EXEC sales.usp_create_order @customer_id = -1;  -- invalid id triggers validation error
+        -- Sentinel helper – forces failure if exception was **not** thrown
+        EXEC test.error;
     END TRY
     BEGIN CATCH
         -- Assert that the error message contains the expected text
-                SELECT test.assert_error_like(
+        SELECT test.assert_error_like(
             'Should report invalid customer id',
             '%invalid customer%'
         );
