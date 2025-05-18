@@ -85,6 +85,7 @@
     <Build Include="tests\Stored Procedures\test.throw.sql" />
     <Build Include="tests\Stored Procedures\test.test.sql" />
     <Build Include="tests\Stored Procedures\test.format_message.sql" />
+    <Build Include="test\Functions\assert_error_number.sql" />
   </ItemGroup>
   <ItemGroup>
     <ArtifactReference Include="$(DacPacRootPath)\Extensions\Microsoft\SQLDB\Extensions\SqlServer\160\SqlSchemas\master.dacpac">

@@ -48,6 +48,16 @@ Create a stored procedure inside `tests`. The procedure name encodes the object 
 * `<object>` – object name (`usp_create_order`)
 * `@<action>` – *optional* scenario / edge‑case tag
 
+#### Why wrap tests in a `BEGIN TRAN / ROLLBACK`
+
+> **Most T‑TEST samples open a transaction at the very top and roll it back at the end.**
+>
+> • **Self‑contained execution** – you (or CI) can simply `EXEC [tests].[…]` and the procedure cleans up after itself, leaving no side‑effects.
+>
+> • **Transaction‑aware flows** – Service Broker dialogs, SQL Agent jobs started with `sp_start_job`, and any trigger‑spawned work all participate in the same transaction, so you can assert on their behaviour *before* the rollback.
+>
+> • **Zero data pollution** – production tables remain untouched even if the test inserts millions of rows.
+
 Example:
 
 ```sql
@@ -70,21 +80,71 @@ ROLLBACK;
 
 Any uncaught exception fails the test automatically.
 
-### 3. Run all tests
+### Run tests
+
+T‑TEST provides two convenient ways to execute your tests:
+
+1. \*\*Via the runner – \*\***`test.run`**
+2. **By calling the test procedure directly**
+
+#### 1. Using `test.run`
 
 ```sql
-EXEC test.run;      -- run everything
+-- run absolutely everything
+EXEC test.run;
+
+-- run only tests that target objects in the sales schema
+EXEC test.run @schemas = N'sales';
+
+-- run a specific test and stop on first failure
+EXEC test.run
+      @test_names        = N'[tests].[sales.usp_create_order@happy_path]|[tests].[inventory.adjust_stock@edge_case]',
+      @exclude_test_names = N'[tests].[obsolete.some_legacy_test]',
+      @schemas            = N'sales,inventory',
+      @exclude_schemas    = N'legacy',
+      @limit_failed       = 5,              -- stop after 5 failures
+      @before_callback    = N'SET NOCOUNT ON',
+      @log_proc_name      = N'test.log';
+
 ```
 
-You will see something like:
+`test.run` prints a concise summary and **throws** if any test fails, giving `sqlcmd` or your CI pipeline a non‑zero exit code:
 
 ```
 ################################################################################################
 Running [tests].[sales.usp_create_order@happy_path]
-INFO: 1 tests of 3 executed. Succeeded: 1, failed: 0, errors: 0
+INFO: 5 tests executed. Succeeded: 5, failed: 0, errors: 0
 ```
 
-If any test fails `test.run` will `THROW`, making `sqlcmd`/CI step fail.
+#### 2. Executing a test procedure directly
+
+Because most tests are wrapped in `BEGIN TRAN / ROLLBACK`, you can execute a single test in SSMS without leaving data behind:
+
+```sql
+EXEC [tests].[sales.usp_create_order@happy_path];
+```
+
+Perfect for quick debugging and exploratory runs.
+
+---
+
+## 🔒 Transactions: when to wrap and when to skip
+
+Most T‑TEST samples begin with `BEGIN TRAN … ROLLBACK`. **Why?**
+
+1. **Run individual tests ad‑hoc** – You can execute a single test procedure in SSMS and be sure nothing sticks in the database after the rollback.
+2. **Keep CI databases clean** – The test runner doesn’t need to issue explicit rollbacks; each test is self‑contained.
+3. **Isolation = repeatability** – Data written by one test never pollutes the next run.
+
+### When *not* to start a manual transaction
+
+Some behaviours depend on a real commit:
+
+* **Service Broker conversations** – activation procedures, queue processing, and message delivery only fire after the outer transaction commits.
+* **SQL Agent jobs / sp\_start\_job** – the job executes in a separate session; wrapping the call in a transaction may postpone it indefinitely.
+* **Trigger / CDC / replication side‑effects** – if your assertion needs to observe them *after* commit.
+
+For such scenarios simply omit `BEGIN TRAN` / `ROLLBACK` and let your test clean up explicitly or run against disposable test data.
 
 ---
 
@@ -105,7 +165,7 @@ BEGIN TRAN
 ROLLBACK;
 ```
 
-### 2. JSON order‑independent comparison (no temp variables needed)
+### 2. Recordset comparison (no temp tables needed)
 
 ```sql
 CREATE OR ALTER PROCEDURE [tests].[api.get_users@ordering]
@@ -117,7 +177,7 @@ BEGIN TRAN
        **functions**.
     */
     SELECT test.assert_equals(
-        'Users JSON must match ignoring order',
+        'Users must match',
         (
             SELECT *
             FROM (VALUES (1, N'Ann'), (2, N'Bob')) v(id, name)
@@ -128,30 +188,47 @@ BEGIN TRAN
 ROLLBACK;
 ```
 
-### 3. Exception handling
+### 3. Exception handling (real object)
 
 ```sql
-CREATE OR ALTER PROCEDURE [tests].[test.throw@message_and_proc]
+CREATE OR ALTER PROCEDURE [tests].[sales.usp_create_order@invalid_customer]
 AS
 BEGIN TRAN
     BEGIN TRY
-        EXEC test.throw @message = 'Test exception!' , @proc_id = @@procid;
-
-        -- Sentinel helper – forces failure if exception was **not** thrown
-        EXEC test.error;
+        -- Call the object under test which is *expected* to raise
+        EXEC sales.usp_create_order @customer_id = -1;  -- invalid id triggers validation error
     END TRY
     BEGIN CATCH
-        -- Validate message text
-        SELECT test.assert_error_like('Thrown exception should contain the message', 'Test exception!%');
+        -- Assert that the error message contains the expected text
+                SELECT test.assert_error_like(
+            'Should report invalid customer id',
+            '%invalid customer%'
+        );
 
-        -- Validate procedure tag
-        SELECT test.assert_error_like(
-            'Thrown exception should contain the called procedure name separated by <Procedure:> tag',
-            CONCAT('%', '<Procedure:>', '%', QUOTENAME(OBJECT_SCHEMA_NAME(@@procid)), '.', QUOTENAME(OBJECT_NAME(@@procid)), '%')
+        SELECT test.assert_error_number(
+            'Should raise validation error number',
+            50001
         );
     END CATCH;
 ROLLBACK;
 ```
+
+### 4. Inline `test.fail` inside a `WHERE` clause Inline `test.fail` inside a `WHERE` clause
+
+```sql
+CREATE OR ALTER PROCEDURE [tests].[security.is_admin@assert_role]
+AS
+BEGIN TRAN
+    /*
+       Fail the test *only* when the condition is true.
+       Here we assert that the current login must belong to the db_owner role.
+    */
+    SELECT test.fail('Current login must be a member of db_owner')
+    WHERE IS_MEMBER('db_owner') = 0;
+ROLLBACK;
+```
+
+````
 
 ---
 
@@ -161,6 +238,7 @@ ROLLBACK;
 | ------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------- |
 | `test.assert_equals(msg, expected, actual)` | smart equality check (numbers, JSON, etc.)                     | `test.assert_equals('Should be 42', '42', @val)`                      |
 | `test.assert_error_like(msg, pattern)`      | assert previously raised error message                         | `test.assert_error_like('Should complain about PK', '%PRIMARY KEY%')` |
+| `test.assert_error_number(msg, expected_number)` | assert error **number** inside CATCH block                     | `test.assert_error_number('Should raise 50001', 50001)` |
 | `test.assert_not_null(msg, value)`          | value **must** be NOT NULL                                     |                                                                       |
 | `test.assert_null(msg, value)`              | value **must** be NULL                                         |                                                                       |
 | `test.fail(msg)`                            | fail immediately, you can add your conditions in WHERE section | SELECT `test.fail('Not implemented')` WHERE IsAdmin(@my\_profile) = 0 |
@@ -179,7 +257,7 @@ EXEC test.run
       @limit_failed       = 5,              -- stop after 5 failures
       @before_callback    = N'SET NOCOUNT ON',
       @log_proc_name      = N'test.log';
-```
+````
 
 | Parameter                       | Default      | Description                                                         |
 | ------------------------------- | ------------ | ------------------------------------------------------------------- |
@@ -263,3 +341,5 @@ Add a job after your migration step:
 Feel free to open issues for bugs or feature requests.
 
 ---
+
+##

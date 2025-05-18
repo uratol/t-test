@@ -3,3 +3,13 @@
 /*/bin/
 /*/obj/
 
+# SSDT / database-project caches
+*.jfm
+*.dbmdl
+*.mdl
+*.dbproj.schemaview
+
+# Ignore DBML unless you really need LINQ-to-SQL mappings
+*.dbml
+*.designer.cs
+
