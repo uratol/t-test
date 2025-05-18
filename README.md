@@ -171,7 +171,7 @@ BEGIN TRAN
     EXEC @result = math.add @a = 20, @b = 22;
 
     -- Should return 42
-    SELECT test.assert_equals('20 + 22 must be 42', '42', @result);
+    SELECT test.assert_equals('20 + 22 must be 42', 42, @result);
 ROLLBACK;
 ```
 
@@ -244,7 +244,7 @@ ROLLBACK;
 
 ## 🧪 Implementation tricks
 
-### 1. **Assertions as inline functions**
+### 1. **Assertions as functions**
 
 T‑TEST ships every helper (`test.assert_equals`, `test.assert_error_like`, `test.fail`, …) as a **scalar function**, not a stored procedure.
 Why this matters:
@@ -268,7 +268,7 @@ RETURN CAST(LEFT(@error_message, 4000) AS int);  -- inside test.throw_error()
 ```
 
 * The function is declared to return **int**, but `@error_message` is almost never a valid integer.
-* The forced `CAST` raises conversion error **245** (`Conversion failed when converting the nvarchar value … to data type int`).
+* The forced `CAST` raises conversion error **245** (`Conversion failed when converting the nvarchar value '<our_error_message>' to data type int`).
 * That error propagates just like a normal `THROW`, so the outer `TRY…CATCH` (or the framework runner) can handle it.
 
 No special flags or return‑value checks—SQL Server itself turns the failed cast into a real exception.
