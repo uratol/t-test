@@ -1,4 +1,4 @@
-﻿create function [test].[assert_null]
+﻿CREATE function [test].[assert_null]
 (@message nvarchar(max)
 ,@value varbinary(max)
 )
@@ -6,6 +6,9 @@ returns nvarchar(max)
 as
 begin
 
-return iif(@value is not null, test.fail(@message), '')
+if @value is not null
+	return test.fail(@message)
+
+return ''
 
 end
