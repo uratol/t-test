@@ -264,7 +264,7 @@ PRINT N'Creating Function [test].[assert_not_null]...';
 
 
 GO
-create function test.assert_not_null
+create function [test].[assert_not_null]
 (@message nvarchar(max)
 ,@value varbinary(max)
 )
@@ -272,7 +272,10 @@ returns nvarchar(max)
 as
 begin
 
-return iif(@value is null, test.fail(@message), '')
+if @value is null
+	return test.fail(@message)
+
+return ''
 
 end
 GO
@@ -288,7 +291,10 @@ returns nvarchar(max)
 as
 begin
 
-return iif(@value is not null, test.fail(@message), '')
+if @value is not null
+	return test.fail(@message)
+
+return ''
 
 end
 GO
