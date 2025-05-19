@@ -133,6 +133,16 @@ Perfect for quick debugging and exploratory runs.
 
 ---
 
+## 📦 Example project
+
+A full working demo that uses T‑TEST for its database layer lives here:
+
+[t‑chess ▶ ](https://github.com/uratol/t-chess)
+
+Explore the `tests` folder to see real‑world tests written with the patterns shown above.
+
+---
+
 ## 🔒 Transactions: when to wrap and when to skip
 
 ### Why wrap in `BEGIN TRAN … ROLLBACK`
