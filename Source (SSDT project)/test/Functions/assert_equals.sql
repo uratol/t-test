@@ -6,13 +6,15 @@
 returns nvarchar(max)
 as
 begin
-	
-	if [test].[is_equal](@expected, @actual) = 1
-		return ''
+	declare @return_value nvarchar(max)
 
-	return test.fail(@message + char(13)+char(10)+
-					'expected: ' + isnull('<'+@expected+'>', 'null') +
-					char(13)+char(10)+
-					'but was : ' + isnull('<'+@actual+'>', 'null'))
-	
+	if [test].[is_equal](@expected, @actual) = 1
+		set @return_value = N''
+	else
+		set @return_value = test.fail(@message + char(13)+char(10)+
+						'expected: ' + isnull('<'+@expected+'>', 'null') +
+						char(13)+char(10)+
+						'but was : ' + isnull('<'+@actual+'>', 'null'))
+
+	return @return_value
 end

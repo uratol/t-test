@@ -5,10 +5,12 @@
 returns nvarchar(max)
 as
 begin
+	declare @return_value nvarchar(max)
 
-if @value is null
-	return test.fail(@message)
+	if @value is null
+		set @return_value = test.fail(@message)
+	else
+		set @return_value = N''
 
-return ''
-
+	return @return_value
 end

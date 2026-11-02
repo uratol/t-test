@@ -66,14 +66,15 @@
   </ItemGroup>
   <ItemGroup>
     <Build Include="test\Functions\format_message.sql" />
-    <Build Include="test\Functions\normalize_json.sql" />
+    <Build Include="test\Functions\is_json_equal.sql" />
     <Build Include="test\Functions\is_equal.sql" />
     <Build Include="test\Functions\fail.sql" />
-    <Build Include="test\Functions\error.sql" />
+    <Build Include="test\Functions\fail_no_error.sql" />
     <Build Include="test\Functions\assert_null.sql" />
     <Build Include="test\Functions\assert_not_null.sql" />
-    <Build Include="test\Functions\assert_error_like.sql" />
+    <Build Include="test\Functions\assert_error.sql" />
     <Build Include="test\Functions\assert_equals.sql" />
+    <Build Include="test\Functions\assert_float_equals.sql" />
     <Build Include="tests\Stored Procedures\test.test%40name_convention.sql" />
     <Build Include="test\Stored Procedures\log.sql" />
     <Build Include="test\Stored Procedures\run.sql" />
@@ -82,10 +83,20 @@
     <Build Include="test\Views\test.sql" />
     <Build Include="test\Functions\throw_error.sql" />
     <Build Include="test\Stored Procedures\throw.sql" />
+    <Build Include="test\Stored Procedures\assert_resultset_equals.sql" />
     <Build Include="tests\Stored Procedures\test.throw.sql" />
     <Build Include="tests\Stored Procedures\test.test.sql" />
     <Build Include="tests\Stored Procedures\test.format_message.sql" />
-    <Build Include="test\Functions\assert_error_number.sql" />
+    <Build Include="tests\Stored Procedures\test.assert_equals.sql" />
+    <Build Include="tests\Stored Procedures\test.assert_float_equals.sql" />
+    <Build Include="tests\Stored Procedures\test.assert_resultset_equals.sql" />
+    <Build Include="tests\Stored Procedures\test.assert_error.sql" />
+    <Build Include="tests\Stored Procedures\test.assert_not_null.sql" />
+    <Build Include="tests\Stored Procedures\test.assert_null.sql" />
+    <Build Include="tests\Stored Procedures\test.is_equal.sql" />
+    <Build Include="tests\Stored Procedures\sys.objects%40tables.sql" />
+    <Build Include="tests\Stored Procedures\stdev%40basic.sql" />
+    <Build Include="tests\Stored Procedures\data_types%40basic.sql" />
   </ItemGroup>
   <ItemGroup>
     <ArtifactReference Include="$(DacPacRootPath)\Extensions\Microsoft\SQLDB\Extensions\SqlServer\160\SqlSchemas\master.dacpac">

@@ -12,7 +12,6 @@
 , @p4_str nvarchar(max) = N'!unassigned' 
 , @proc_id int = null
 , @rowcount int = null
-with execute as 'dbo'
 as
 
 declare @unassigned nvarchar(50) = N'!unassigned'
@@ -37,7 +36,7 @@ select @message = test.format_message(@message, @p1, @p2, @p3, @p4)
 set @message = concat(
 					upper(@severity)
 				, ': '
-				, replace(@message, '%', '%%')
+				, @message
 				)
 
 declare @is_data_big bit = iif(len(@data) > 2048 - len(@message) or charindex(nchar(13), @data) > 0
@@ -47,12 +46,12 @@ set @message = left(
 				concat(
 					@message
 				, case when @data is not null then ': ' end
-				, case when @is_data_big = 0 then replace(@data, '%', '%%') + ' ' end
+				, case when @is_data_big = 0 then @data + ' ' end
 				)
-			, 2048 - len(@tail))
+			, 2044 - len(@tail))
 			+ @tail
 
-raiserror(@message, 0, 1) with nowait
+raiserror(N'%s', 0, 1, @message) with nowait
 
 if @is_data_big = 1 begin
 	declare @i int = 0

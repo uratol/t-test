@@ -20,8 +20,6 @@ as
 		);
 	end
 
-	exec test.log @message = @message, @severity = 'error', @proc_id = @proc_id;
-
 	set @message = replace(@message, '%', '%%');
 
 	throw @err_num, @message, 1;

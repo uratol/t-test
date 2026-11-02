@@ -19,7 +19,7 @@ from sys.procedures as p
 	join sys.schemas as s
 		on p.schema_id = s.schema_id
 	outer apply (
-		select charindex('.', p.name) as schema_separator_index
+		select charindex('.', left(p.name, charindex('@', p.name + '@') - 1)) as schema_separator_index
 			 , charindex('@', p.name) as action_separator_index) as const
 	outer apply (
 		select iif(const.schema_separator_index > 0, left(p.name, const.schema_separator_index - 1), null) as tested_object_schema_name
@@ -31,6 +31,7 @@ from sys.procedures as p
 				   , len(p.name) - const.action_separator_index + 1
 				   , 0)
 				   )
+			   else left(p.name, iif(const.action_separator_index > 0, const.action_separator_index - 1, len(p.name)))
 			   end
 			   as tested_object_name) as parsed
 where s.name = 'tests'
