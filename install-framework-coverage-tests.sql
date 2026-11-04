@@ -1,6 +1,6 @@
 -- Run this entire file, including every GO batch, in ONE test-Warehouse session.
 -- install.sql must already have completed successfully.
--- Adds 14 framework tests and runs them with the 14 basic tests.
+-- Adds 16 framework tests and runs them with the 15 basic tests (39 positive cases).
 -- Expected runner errors appear in Messages. The LAST result grid is authoritative.
 -- Positive @fc_* tests remain installed; failing @fc_fixture_* probes are cleaned up.
 -- Functional scenarios, not instrumented 100% line/branch coverage.
@@ -17,7 +17,11 @@ IF @@TRANCOUNT > 0
 IF OBJECT_ID(N'test.run', N'P') IS NULL OR OBJECT_ID(N'test.is_equal', N'FN') IS NULL
 	OR OBJECT_ID(N'test.fail_no_error', N'FN') IS NULL
 	OR OBJECT_ID(N'test.assert_error', N'FN') IS NULL
+	OR OBJECT_ID(N'test.set_scope', N'P') IS NULL
+	OR OBJECT_ID(N'test.vector', N'P') IS NULL
 	THROW 51090, 'Install the framework before running coverage tests.', 1;
+IF OBJECT_ID(N'tempdb..#test_vectors') IS NOT NULL
+	THROW 51090, 'Coverage requires no caller #test_vectors; its contents will not be changed.', 1;
 DECLARE @collision nvarchar(512);
 SELECT TOP (1) @collision = name
 FROM (VALUES
@@ -702,6 +706,95 @@ DROP PROC [tests].[fc_catalog_invalid@];
 DROP PROC [tests].[@fc_catalog_invalid];');
 GO
 IF EXISTS (SELECT 1 FROM #fc_run WHERE ready = 1)
+	EXEC(N'CREATE OR ALTER PROC [tests].[test.set_scope@fc_context]
+AS
+PRINT N''Check mutable session/global scope in SESSION_CONTEXT.'';
+PRINT N''Expect: exact values; invalid input preserves the last scope.'';
+SET NOCOUNT ON;
+DECLARE @previous sql_variant = SESSION_CONTEXT(N''ttest:vectors:scope''),
+	@actual sql_variant, @scope nvarchar(max), @i int = 0, @caught bit,
+	@scopes nvarchar(max) = N''["session","global","session","global"]'',
+	@invalid nvarchar(max) = N''[null,"","GLOBAL","SESSION","global ","session "]'';
+BEGIN TRY
+	WHILE @i < 4
+	BEGIN
+		SELECT @scope = value FROM OPENJSON(@scopes) WHERE CONVERT(int, [key]) = @i;
+		EXEC test.set_scope @scope;
+		SET @actual = SESSION_CONTEXT(N''ttest:vectors:scope'');
+		IF CONVERT(nvarchar(4000), @actual) COLLATE Latin1_General_100_BIN2
+				IS DISTINCT FROM @scope COLLATE Latin1_General_100_BIN2
+			OR DATALENGTH(CONVERT(nvarchar(4000), @actual)) IS DISTINCT FROM DATALENGTH(@scope)
+			OR SQL_VARIANT_PROPERTY(@actual, ''BaseType'') IS DISTINCT FROM N''nvarchar''
+			THROW 51091, ''set_scope did not store the exact mutable Unicode scope.'', 1;
+		SET @i += 1;
+	END;
+	SET @i = 0;
+	WHILE @i < (SELECT COUNT(*) FROM OPENJSON(@invalid))
+	BEGIN
+		SELECT @scope = value FROM OPENJSON(@invalid) WHERE CONVERT(int, [key]) = @i;
+		SET @caught = 0;
+		BEGIN TRY
+			EXEC test.set_scope @scope;
+		END TRY
+		BEGIN CATCH
+			IF ERROR_NUMBER() <> 70000 THROW;
+			SET @caught = 1;
+		END CATCH;
+		IF @caught = 0 OR CONVERT(nvarchar(4000), SESSION_CONTEXT(N''ttest:vectors:scope''))
+			COLLATE Latin1_General_100_BIN2 IS DISTINCT FROM N''global''
+			THROW 51091, ''Invalid scope was accepted or changed SESSION_CONTEXT.'', 1;
+		SET @i += 1;
+	END;
+END TRY
+BEGIN CATCH
+	EXEC sys.sp_set_session_context @key = N''ttest:vectors:scope'', @value = @previous;
+	THROW;
+END CATCH;
+EXEC sys.sp_set_session_context @key = N''ttest:vectors:scope'', @value = @previous;');
+GO
+IF EXISTS (SELECT 1 FROM #fc_run WHERE ready = 1)
+	EXEC(N'CREATE OR ALTER PROC [tests].[test.vector@fc_literals]
+	@case_id int = 0,
+	@number bigint = 7,
+	@amount decimal(18,4) = 1.5000,
+	@approx float = 1.25e0,
+	@flag bit = 1,
+	@text nvarchar(max) = N''default'',
+	@day date = ''20260304'',
+	@stamp datetime2(6) = ''2026-03-04T05:06:07.123456'',
+	@bytes varbinary(8) = 0x01
+AS
+PRINT N''Check typed vector arguments, Unicode, NULL and DEFAULT.'';
+PRINT N''Expect: SQL preserves values across positional/named literal arguments.'';
+SET NOCOUNT ON;
+IF NOT EXISTS (
+	SELECT 1
+	FROM (VALUES
+		(0, CAST(7 AS bigint), CAST(1.5000 AS decimal(18,4)), CAST(1.25 AS float),
+			CAST(1 AS bit), CAST(N''default'' AS nvarchar(max)), CAST(''20260304'' AS date),
+			CAST(''2026-03-04T05:06:07.123456'' AS datetime2(6)), CAST(0x01 AS varbinary(8))),
+		(1, CAST(-9223372036854775808 AS bigint), -1234.5678, -0.000125,
+			1, N''O''''Brien, Jr.'', CAST(''20240229'' AS date),
+			CAST(''2024-02-29T01:02:03.123456'' AS datetime2(6)), 0x00FF),
+		(2, CAST(9223372036854775807 AS bigint), 0.0001, 1250.0,
+			0, NCHAR(381) + NCHAR(0x4E2D) + N'', O''''Brien\path'', CAST(''20261231'' AS date),
+			CAST(''2026-12-31T23:59:59.999999'' AS datetime2(6)), 0x),
+		(3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+		(4, 0, 0.0000, 0.0, 0, N'''', NULL, NULL, 0x)
+	) expected(case_id, number, amount, approx, flag, text_value, day_value, stamp, bytes)
+	WHERE @case_id = expected.case_id
+		AND @number IS NOT DISTINCT FROM expected.number
+		AND @amount IS NOT DISTINCT FROM expected.amount
+		AND @approx IS NOT DISTINCT FROM expected.approx
+		AND @flag IS NOT DISTINCT FROM expected.flag
+		AND CONVERT(varbinary(max), @text) IS NOT DISTINCT FROM CONVERT(varbinary(max), expected.text_value)
+		AND @day IS NOT DISTINCT FROM expected.day_value
+		AND @stamp IS NOT DISTINCT FROM expected.stamp
+		AND @bytes IS NOT DISTINCT FROM expected.bytes
+)
+	THROW 51091, ''Typed vector arguments differed from the independent expected values.'', 1;');
+GO
+IF EXISTS (SELECT 1 FROM #fc_run WHERE ready = 1)
 BEGIN
 EXEC(N'CREATE PROC test.fc_observer
 	@message nvarchar(max) = NULL, @data nvarchar(max) = NULL,
@@ -797,15 +890,43 @@ DECLARE @positive nvarchar(max) =
 	+ N'[tests].[test.assert_float_equals]|'
 	+ N'[tests].[test.assert_resultset_equals]|'
 	+ N'[tests].[test.assert_error]|'
+	+ N'[tests].[power@vectors]|'
 	+ N'[tests].[test.is_equal@fc_values]|[tests].[test.is_json_equal@fc_json]|'
 	+ N'[tests].[test.assert_equals@fc_assertions]|[tests].[test.throw_error@fc_error_helpers]|'
 	+ N'[tests].[test.assert_null@fc_null]|[tests].[test.assert_not_null@fc_not_null]|'
 	+ N'[tests].[test.fail@fc_failure]|[tests].[test.fail_no_error@fc_no_error]|[tests].[test.assert_error@fc_patterns]|'
 	+ N'[tests].[test.assert_error@fc_error_assertions]|[tests].[test.format_message@fc_parameters]|'
-	+ N'[tests].[test.log@fc_logging]|[tests].[test.throw@fc_throwing]|[tests].[test.test@fc_catalog]',
+	+ N'[tests].[test.log@fc_logging]|[tests].[test.throw@fc_throwing]|[tests].[test.test@fc_catalog]|'
+	+ N'[tests].[test.set_scope@fc_context]|[tests].[test.vector@fc_literals]',
 	@code int = 0, @error nvarchar(max) = NULL, @summary nvarchar(max), @run_id int = OBJECT_ID(N'test.run');
 DECLARE @positive_count int = (SELECT COUNT(*) FROM STRING_SPLIT(@positive, N'|'));
+DECLARE @previous_scope sql_variant = SESSION_CONTEXT(N'ttest:vectors:scope'),
+	@literal_vectors nvarchar(max) = N'[
+ "0",
+ "1,-9223372036854775808,-1234.5678,-1.25e-4,1,N''O''''Brien, Jr.'',''20240229'',''2024-02-29T01:02:03.123456'',0x00FF",
+ "@bytes=0x,@text=N''\u017d\u4e2d, O''''Brien\\path'',@case_id=2,@flag=0,@approx=1.25e+3,@amount=0.0001,@number=9223372036854775807,@stamp=''2026-12-31T23:59:59.999999'',@day=''20261231''",
+ "3,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL",
+ "4,0,0.0000,0e0,0,N'''',NULL,NULL,0x",
+ "@case_id=0,@number=DEFAULT,@amount=DEFAULT,@approx=DEFAULT,@flag=DEFAULT,@text=DEFAULT,@day=DEFAULT,@stamp=DEFAULT,@bytes=DEFAULT"
+]',
+	@literal_index int = 0, @literal_parameters nvarchar(max);
+CREATE TABLE #test_vectors (
+	procedure_name varchar(2048) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL,
+	parameters varchar(max) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL
+);
 BEGIN TRY
+	EXEC test.set_scope N'session';
+	EXEC test.vector N'[tests].[power@vectors]', N'2,3,8';
+	EXEC test.vector N'[tests].[power@vectors]', N'3,2,9';
+	EXEC test.vector N'[tests].[power@vectors]', N'5,0,1';
+	EXEC test.vector N'[tests].[power@vectors]', N'-2,3,-8';
+	WHILE @literal_index < (SELECT COUNT(*) FROM OPENJSON(@literal_vectors))
+	BEGIN
+		SELECT @literal_parameters = value FROM OPENJSON(@literal_vectors)
+		WHERE CONVERT(int, [key]) = @literal_index;
+		EXEC test.vector N'[tests].[test.vector@fc_literals]', @literal_parameters;
+		SET @literal_index += 1;
+	END;
 	EXEC test.run @test_names = @positive, @log_proc_name = N'test.fc_observer';
 END TRY
 BEGIN CATCH
@@ -813,10 +934,13 @@ BEGIN CATCH
 	SET @error = ERROR_MESSAGE();
 	IF @@TRANCOUNT > 0 ROLLBACK;
 END CATCH;
+DROP TABLE #test_vectors;
+EXEC sys.sp_set_session_context @key = N'ttest:vectors:scope', @value = @previous_scope;
 SELECT @summary = message FROM #fc_audit WHERE kind = 'log' AND severity = 'Info';
 INSERT #fc_report VALUES ('positive unit tests and bundled tests',
-	IIF(@code = 0 AND @summary LIKE CONCAT(@positive_count, ' tests of % executed. Succeded: ',
-		@positive_count, ', failed: 0, errors: 0'), 'PASS', 'FAIL'),
+	IIF(@code = 0 AND @summary = CONCAT(@positive_count, ' procedures selected. Planned cases: ',
+		@positive_count + 8, ', executed cases: ', @positive_count + 8, '. Succeded: ',
+		@positive_count + 8, ', failed: 0, errors: 0'), 'PASS', 'FAIL'),
 	CONVERT(varchar(8000), COALESCE(@error, @summary, N'No successful runner summary')));
 
 DECLARE @map nvarchar(max) = N'[

@@ -59,6 +59,7 @@
     <Folder Include="test\" />
     <Folder Include="test\Views\" />
     <Folder Include="test\Functions\" />
+    <Folder Include="test\Tables\" />
     <Folder Include="tests\" />
     <Folder Include="tests\Stored Procedures\" />
     <Folder Include="test\Stored Procedures\" />
@@ -78,6 +79,10 @@
     <Build Include="tests\Stored Procedures\test.test%40name_convention.sql" />
     <Build Include="test\Stored Procedures\log.sql" />
     <Build Include="test\Stored Procedures\run.sql" />
+    <Build Include="test\Stored Procedures\set_scope.sql" />
+    <Build Include="test\Stored Procedures\vector.sql" />
+    <Build Include="test\Stored Procedures\reset.sql" />
+    <Build Include="test\Tables\test_vectors.sql" />
     <Build Include="Security\tests.sql" />
     <Build Include="Security\test.sql" />
     <Build Include="test\Views\test.sql" />
@@ -97,6 +102,8 @@
     <Build Include="tests\Stored Procedures\sys.objects%40tables.sql" />
     <Build Include="tests\Stored Procedures\stdev%40basic.sql" />
     <Build Include="tests\Stored Procedures\data_types%40basic.sql" />
+    <Build Include="tests\Stored Procedures\power%40vectors.sql" />
+    <PostDeploy Include="PostDeploy.sql" />
   </ItemGroup>
   <ItemGroup>
     <ArtifactReference Include="$(DacPacRootPath)\Extensions\Microsoft\SQLDB\Extensions\SqlServer\160\SqlSchemas\master.dacpac">

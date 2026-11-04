@@ -1,5 +1,5 @@
 -- SQL Server 2022+ / Fabric Warehouse.
--- Removes the 67 shipped test procedures, framework objects and legacy API names.
+-- Removes the 70 shipped test procedures, framework objects and legacy API names.
 -- Preserves schemas, unrelated user objects, tables and data.
 -- Custom tests that depend on the framework will need it reinstalled.
 -- Run the entire file outside a transaction. Cleanup is not atomic.
@@ -8,7 +8,7 @@ IF @@TRANCOUNT > 0
 	THROW 51090, 'Run uninstall.sql outside a transaction.', 1;
 
 BEGIN TRY
-	-- Basic verification (14).
+	-- Basic verification (15).
 	DROP PROCEDURE IF EXISTS [tests].[test.test];
 	DROP PROCEDURE IF EXISTS [tests].[test.test@name_convention];
 	DROP PROCEDURE IF EXISTS [tests].[test.format_message];
@@ -24,8 +24,9 @@ BEGIN TRY
 	DROP PROCEDURE IF EXISTS [tests].[sys.objects@tables];
 	DROP PROCEDURE IF EXISTS [tests].[stdev@basic];
 	DROP PROCEDURE IF EXISTS [tests].[data_types@basic];
+	DROP PROCEDURE IF EXISTS [tests].[power@vectors];
 
-	-- Additional framework coverage (14).
+	-- Additional framework coverage (16).
 	DROP PROCEDURE IF EXISTS [tests].[test.is_equal@fc_values];
 	DROP PROCEDURE IF EXISTS [tests].[test.is_json_equal@fc_json];
 	DROP PROCEDURE IF EXISTS [tests].[test.is_equal_openjson@fc_json];
@@ -44,6 +45,8 @@ BEGIN TRY
 	DROP PROCEDURE IF EXISTS [tests].[test.log@fc_logging];
 	DROP PROCEDURE IF EXISTS [tests].[test.throw@fc_throwing];
 	DROP PROCEDURE IF EXISTS [tests].[test.test@fc_catalog];
+	DROP PROCEDURE IF EXISTS [tests].[test.set_scope@fc_context];
+	DROP PROCEDURE IF EXISTS [tests].[test.vector@fc_literals];
 
 	-- Additional catalog comparisons (12).
 	DROP PROCEDURE IF EXISTS [tests].[sys.objects@views];
@@ -89,6 +92,9 @@ BEGIN TRY
 	DROP PROCEDURE IF EXISTS [tests].[stdev@value_100000];
 
 	DROP PROCEDURE IF EXISTS [test].[run];
+	DROP PROCEDURE IF EXISTS [test].[reset];
+	DROP PROCEDURE IF EXISTS [test].[vector];
+	DROP PROCEDURE IF EXISTS [test].[set_scope];
 	DROP PROCEDURE IF EXISTS [test].[assert_resultset_equals];
 	DROP PROCEDURE IF EXISTS [test].[assert_query_equals];
 	DROP PROCEDURE IF EXISTS [test].[throw];

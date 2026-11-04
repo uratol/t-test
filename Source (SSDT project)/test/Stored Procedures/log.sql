@@ -39,25 +39,33 @@ set @message = concat(
 				, @message
 				)
 
-declare @is_data_big bit = iif(len(@data) > 2048 - len(@message) or charindex(nchar(13), @data) > 0
+declare @is_data_big bit = iif(datalength(@data) + datalength(@message) + datalength(@tail) + 6 > 2044 * 2
+								or charindex(nchar(13), @data) > 0
 								, 1, 0)
 
+declare @message_limit int = 2044 - datalength(@tail) / 2
 set @message = left(
 				concat(
 					@message
 				, case when @data is not null then ': ' end
 				, case when @is_data_big = 0 then @data + ' ' end
-				)
-			, 2044 - len(@tail))
-			+ @tail
+				) collate Latin1_General_100_BIN2
+			, @message_limit)
+if unicode(right(@message collate Latin1_General_100_BIN2, 1)) between 55296 and 56319
+	set @message = left(@message collate Latin1_General_100_BIN2, datalength(@message) / 2 - 1)
+set @message += @tail
 
 raiserror(N'%s', 0, 1, @message) with nowait
 
 if @is_data_big = 1 begin
-	declare @i int = 0
-	while @i < len(@data) begin
-		declare @data_chunk nvarchar(4000) = substring(@data, @i + 1, 4000)
+	-- Count UTF-16 units explicitly and keep surrogate pairs within the same chunk.
+	declare @i int = 0, @data_length int = datalength(@data) / 2
+	while @i < @data_length begin
+		declare @data_chunk nvarchar(4000) = substring(@data collate Latin1_General_100_BIN2, @i + 1, 4000)
+		if @i + datalength(@data_chunk) / 2 < @data_length
+			and unicode(right(@data_chunk collate Latin1_General_100_BIN2, 1)) between 55296 and 56319
+			set @data_chunk = left(@data_chunk collate Latin1_General_100_BIN2, 3999)
 		print(@data_chunk)
-		set @i += 4000
+		set @i += datalength(@data_chunk) / 2
 	end
 end
