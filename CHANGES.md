@@ -6,26 +6,74 @@ The previous installer and extended suite passed in a user-reported Fabric Wareh
 run (43 groups, zero failures, five inherited bugs). The corrections below pass
 locally but still require rerunning the updated installer and suite on Fabric.
 
+## Vector parametrization, phase 1
+
+Adds `test.set_scope`, `test.vector` and argumentless `test.reset`. The runner keeps
+its exact seven-parameter signature. Dimensions are not deployed in this phase.
+An unset `ttest:vectors:scope` selects global `[test].[test_vectors]`; selecting
+`session` uses caller-created `#test_vectors`. The setter is mutable and affects
+only its connection. Registry columns are `procedure_name` and `parameters`.
+
+Installation creates the global table if absent, using ordinary shared SQL
+Server/Fabric DDL without a distribution clause. Existing compatible tables and
+saved definitions are retained; session tables remain caller-provisioned.
+Registration appends trusted SQL argument text unchanged;
+duplicates execute separately. Missing tables warn and skip registration, while
+run/reset silently skip the unavailable store. Native storage errors propagate.
+Installation never alters or clears an existing registry. Uninstallation preserves
+the global table and data.
+Global reset deletes shared registrations explicitly; it does not change scope.
+
+Before callbacks, the runner copies selected registrations through source-only
+dynamic SQL into scalar JSON. For vector-only execution, the existing JSON arrays
+also serve as the private snapshot and case list: no private temp queue, provider
+layer or dimension machinery is needed. Callback edits, scope changes and test-owned
+rollbacks cannot alter the active case list. Mixed/vector result grids use captured
+metadata rather than joining live discovery. Counts and duration aggregates use BIGINT.
+
+Start/completion logs identify each vector invocation and retain full EXEC text in
+`@data`. Completion is recorded before honoring the failure limit; logger errors
+abort rather than becoming test errors. With no selected vectors, static reporting
+and logger behavior remain unchanged. Duplicate selection still executes the first
+case in the second selection before raising error 50000. In a mixed/vector run this
+framework error uses THROW to abort even without a caller CATCH, avoiding an
+unrecorded invocation reported as successful; the legacy all-static behavior remains.
+Vector result labels use the same name as static tests plus the original parameters
+in parentheses, such as `power@vectors (-2,3,-8)`. Full EXEC text remains in internal
+results and logs; it is not reconstructed from the display label.
+
+Installer basic verification temporarily selects session scope and restores the
+original session-context value, including an unset key, on success and failure.
+It refuses a caller `#test_vectors` collision rather than reading or changing it.
+POWER is the fifteenth built-in test. Installation/SSDT post-deployment inserts only
+missing standard global vectors; reinstallation preserves existing rows and adds no
+duplicates. Installer verification uses a temporary session registry with four
+factory POWER cases, so user global configurations do not change its 18-case result.
+The test procedure itself does not change scope or register data.
+The standalone `vector-tests.sql` exercises 37 scenarios with disposable fixtures.
+Vector runtime compatibility with Fabric still requires execution there.
+
 ## Basic verification and modular test packages
 
-The shared `install.sql` deploys fourteen basic procedures from the SSDT `tests` folder.
+The shared `install.sql` deploys fifteen basic procedures from the SSDT `tests` folder.
 They retain the four original test names and add dedicated equality, NULL,
-ordered/raw JSON, catalog-table, small STDEV and inline data-type checks. Related error/fail helpers
+ordered/raw JSON, catalog-table, small STDEV, inline data-type and POWER vector checks.
+Related error/fail helpers
 are grouped in `test.throw`; all eleven scalar functions are directly exercised.
 This is functional basic coverage, not an instrumented coverage percentage.
 
-The installer footer explicitly selects these fourteen procedures. This intentionally
+The installer footer explicitly selects these fifteen procedures (18 cases). This intentionally
 changes reinstallation from running every discovered test to running only basic
 verification. Additional and user tests are retained. The basic naming check still
 inspects all names, and a direct `EXEC test.run;` still executes all discovered tests.
 The existing EngineEdition-specific execution wrapper and XACT_ABORT scope remain.
 
 Optional scripts register and run their own packages:
-`install-framework-coverage-tests.sql` adds fourteen procedures and runs 28
-basic/positive tests plus 49 scenario groups; `install-compare-resultset-tests.sql`
+`install-framework-coverage-tests.sql` adds sixteen procedures and runs 31
+basic/positive procedures (39 cases) plus 49 scenario groups; `install-compare-resultset-tests.sql`
 adds twelve catalog tests, excluding the existing basic tables comparison;
 `install-stdev-tests.sql` adds 27 numerical cases. Together with basic verification,
-these provide 67 distinct procedures. The scripts replace the former
+these provide 70 distinct procedures. The scripts replace the former
 `full-coverage-test.sql`, `sys-objects-test.sql` and `stdev-test.sql` filenames.
 
 ## Review fixes and clearer tests
@@ -484,7 +532,7 @@ naming validator remains enabled and can still reject logical `math.stdev` targe
 Missing schemas are created conditionally. Framework modules and bundled tests use
 `CREATE OR ALTER`, allowing retries after a partial installation without deleting
 user tests. Completion is printed only after checking all required objects and
-running the fourteen basic tests. Existing user tests are retained, not executed.
+running the fifteen basic procedures (18 cases). Existing user tests are retained, not executed.
 Deployment is not atomic; inspect every batch error even if older objects exist.
 
 The reported Fabric errors confirm five unsupported constructs above, including
@@ -497,11 +545,17 @@ Fabric guarantees or untested distributed UDF calling contexts.
 
 ## Extended functional coverage suite
 
-`install-framework-coverage-tests.sql` adds fourteen positive procedures without
+`install-framework-coverage-tests.sql` adds sixteen positive procedures without
 changing the framework implementation. Assertions, error helpers, equality,
 logging, throwing and discovery have dedicated extended tests. The suite runs
-these with the fourteen basic tests (28 total), then checks runner behavior and
+these with the fifteen basic procedures (31 procedures, 39 cases), then checks runner behavior and
 corrected regressions in 49 scenario groups.
+
+Scope coverage checks exact mutable `SESSION_CONTEXT` values and rejects invalid
+inputs without changing the last valid scope. Six typed vectors cover positional
+and reordered named arguments, numeric limits, decimals, scientific notation, bit,
+Unicode and quoted text, date/datetime2, binary, NULL and DEFAULT. Their session
+registry is removed after verification; the caller's scope and global rows survive.
 
 Expected failures are verified independently with native T-SQL checks rather than
 assuming an assertion succeeded because it did not throw. Temporary observers

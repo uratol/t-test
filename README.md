@@ -37,8 +37,8 @@ Simply execute the included **install.sql** script in the database you want to t
 The script will:
 
 1. **Create two schemas** that hold the framework internals and your tests (see table below).
-2. Register and run the **14 basic self-tests** at the end. On a fresh database,
-   the summary reports `14 tests of 14 executed. Succeded: 14, failed: 0, errors: 0`.
+2. Register and run **15 basic test procedures (18 cases)** at the end, including
+   four POWER vectors. On a fresh database, all 18 cases pass.
    Existing additional and user tests are retained, but are not executed by installation.
 
 | Schema  | Purpose                                                |
@@ -51,14 +51,22 @@ The script will:
 Use **[install.sql](install.sql)** for both SQL Server 2022+ and Fabric Warehouse.
 In the Fabric SQL query editor, paste the entire script and run it,
 including the `GO` batch separators. Use an account with permission to create
-schemas, views, functions and procedures.
+schemas, tables, views, functions and procedures.
 
 The shared installer creates missing schemas and uses `CREATE OR ALTER` for
 framework objects and bundled tests. It can repair a partial installation without
-deleting existing user tests. It runs only the fourteen basic tests at the end,
+deleting existing user tests. It runs only the fifteen basic test procedures at the end,
 and prints completion only after the required objects exist and the
 test run returns successfully. Inspect all errors in Messages; installation is
 not atomic, and a later batch can run after an earlier batch fails.
+
+Basic verification creates a temporary vector fixture, selects session scope and restores
+the caller's original setting on success or failure. Run installation without a caller-created
+`#test_vectors`; verification refuses that collision instead of consuming user cases.
+Installation creates `[test].[test_vectors]` if missing. It never alters an existing
+registry table or clears saved definitions. It inserts only missing standard POWER
+vectors; repeated installation does not duplicate them. Uninstallation preserves the table
+and data. Verification uses four isolated session vectors, not user-saved global cases.
 
 The installer runs `test.log` as the caller, without `dbo` impersonation.
 Procedure names in logs depend on the caller's metadata visibility.
@@ -89,7 +97,7 @@ Rerun the complete `install.sql`, then the complete coverage file below.
 ### Basic verification and additional packages
 
 The basic procedures live in `Source (SSDT project)\tests\Stored Procedures` and
-are included in `install.sql`. They use small, static cases:
+are included in `install.sql`. Fourteen use static cases; POWER uses four registered vectors:
 
 | Basic test | Checks |
 |---|---|
@@ -107,6 +115,7 @@ are included in `install.sql`. They use small, static cases:
 | `sys.objects@tables` | All 12 shared catalog columns plus schema name, including NULLs. |
 | `stdev@basic` | Known sample deviation and one/zero-value NULL boundaries. |
 | `data_types@basic` | Independently defined rows of numeric, temporal, text, binary, GUID, NULL and spatial values. |
+| `power@vectors` | POWER with vectors `2,3,8`, `3,2,9`, `5,0,1` and `-2,3,-8`, saved globally at installation. |
 
 These are functional self-tests, not exclusively integration tests. They exercise
 all eleven scalar functions, the logger/throw helpers, discovery and the runner;
@@ -131,16 +140,17 @@ Unicode and long strings. Its geometry/geography variables are compared through
 JSON/XML values are excluded; JSON is only the comparison transport.
 
 Install optional packages after `install.sql`. Each script registers and
-runs its own package; the framework package also runs the fourteen basic tests.
+runs its own package; the framework package also runs the fifteen basic procedures.
 
 | Script | Additional tests | Execution |
 |---|---:|---|
-| [install-framework-coverage-tests.sql](install-framework-coverage-tests.sql) | 14 | 28 basic/positive tests plus 49 runner/framework scenario groups. |
+| [install-framework-coverage-tests.sql](install-framework-coverage-tests.sql) | 16 | 31 basic/positive procedures (39 cases) plus 49 runner/framework scenario groups. |
 | [install-compare-resultset-tests.sql](install-compare-resultset-tests.sql) | 12 | Additional catalog comparisons; the tables comparison is already basic. |
 | [install-stdev-tests.sql](install-stdev-tests.sql) | 27 | LOG/SIN/value series at sizes 0 through 100,000. |
+| [vector-tests.sql](vector-tests.sql) | 0 retained | 37 vector scenarios; creates and cleans disposable fixtures in a clean test database/session. |
 
-All packages together provide 67 distinct procedures. Reinstallation still runs
-only the fourteen basic tests. `EXEC test.run;` retains its existing meaning: run every
+All packages together provide 70 distinct procedures. Reinstallation still runs
+only the fifteen basic procedures. `EXEC test.run;` retains its existing meaning: run every
 discovered test, including optional and user tests. The basic naming validator
 still checks all registered names, even when only basic tests are selected.
 
@@ -215,8 +225,8 @@ text conversion, not the former date/hex formatting.
 
 After installation, execute the entire
 **[install-framework-coverage-tests.sql](install-framework-coverage-tests.sql)**
-in one test-Warehouse session, including **every `GO` batch**. It creates fourteen
-positive test procedures, runs them with the fourteen basic tests, and exercises
+in one test-Warehouse session, including **every `GO` batch**. It creates sixteen
+positive test procedures, runs them with the fifteen basic procedures, and exercises
 runner behavior using temporary fixtures. The final two result grids show
 `scenario/status/detail` and `coverage_result/failed_groups/known_bug_groups`.
 
@@ -226,12 +236,18 @@ runner behavior using temporary fixtures. The final two result grids show
 | Equality and JSON comparison | Raw numeric/date spelling, JSON types, ordered rows, property ordering, missing/NULL fields, Unicode, large values |
 | Formatting | All parameter positions, explicit ISO/hex text, NULL/default values, Unicode, repeated placeholders and date/hex-like text |
 | Logger | NULL, formatted parameters, inline/multiline/chunked output; PRINT text is a smoke check, not automatically captured |
+| Vector scope and arguments | Mutable session/global context, rejected scope values, BIGINT limits, decimal/scientific literals, bit, Unicode/quotes/commas, date/datetime2, binary, NULL and DEFAULT |
 | Runner | Discovery, filters, custom/default logger, callbacks, snapshot selection, result classification, rollback, failure limits, RETURN codes, duplicates and reporting errors |
+
+The positive run uses an isolated session registry with four POWER and six typed
+vectors, then restores the caller's scope without changing global registrations.
+A pre-existing caller `#test_vectors` is rejected without changing its contents.
+The typed test also checks its defaults when run later without registered vectors.
 
 There are **49 scenario groups**, not measured 100% line/branch coverage.
 The expected result is **`PASSED`, zero failed groups and zero known bugs**; the
-`known_bug_groups` column is retained for result-shape compatibility. All twenty-eight
-positive/bundled test procedures must succeed. See [Behavior changes](CHANGES.md)
+`known_bug_groups` column is retained for result-shape compatibility. All thirty-one
+positive/bundled procedures (39 cases) must succeed. See [Behavior changes](CHANGES.md)
 for the corrections and the ordered/raw JSON comparison contract.
 
 **Expected errors are intentional:** the final duplicate probe emits error 50000
@@ -372,6 +388,37 @@ EXEC [tests].[sales.usp_create_order@happy_path];
 Perfect for quick debugging and exploratory runs.
 
 ---
+
+### Vector parameters
+
+**Global storage is the default.** Installation provisions the table; register trusted
+SQL argument lists and keep using the existing `test.run` interface. Only vectors
+are implemented; dimensions are deferred.
+
+```sql
+CREATE OR ALTER PROC [tests].[test.assert_equals@vector_example]
+    @expected nvarchar(max), @actual nvarchar(max)
+AS
+DECLARE @result nvarchar(max) =
+    test.assert_equals(N'Vector equality', @expected, @actual);
+GO
+
+EXEC test.vector N'[tests].[test.assert_equals@vector_example]', N'1, 1';
+EXEC test.vector N'[tests].[test.assert_equals@vector_example]', N'NULL, NULL';
+EXEC test.run @test_names = N'[tests].[test.assert_equals@vector_example]';
+```
+
+Every stored row executes, including duplicates. Procedures without vectors retain
+their single static call. Saved global cases can be run from later connections.
+For ad hoc cases, create `#test_vectors` with the columns documented in the API.
+Create it in the calling batch and call `EXEC test.set_scope N'session';` once on that connection.
+No scope parameter is added to registration, reset or run.
+
+`EXEC test.reset;` clears only the chosen store, without dropping its table or changing
+scope. Global reset affects every user sharing those definitions. Missing tables warn
+and skip registration; the runner/reset silently continue without that source.
+Reset also removes the shipped POWER vectors; rerun `install.sql` to restore them.
+See [vector APIs](api.md#testvector) for storage, logging and trust-boundary details.
 
 ## 📦 Example project
 

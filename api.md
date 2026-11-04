@@ -1,6 +1,6 @@
 # API reference
 
-The API installed by `install.sql`: eleven scalar functions, four stored procedures
+The API installed by `install.sql`: eleven scalar functions, seven stored procedures
 and one discovery view. See [README](README.md) for installation and platform notes.
 
 Call scalar functions with `SET` or `SELECT`, procedures with `EXEC`, and the view
@@ -40,6 +40,9 @@ Assign successful assertion results to variables to avoid empty result grids.
 | [test.fail_no_error](#testfail_no_error) | Function | Fail when an expected exception did not occur. |
 | [test.throw_error](#testthrow_error) | Function | Raise a low-level error from a scalar function. |
 | [test.run](#testrun) | Procedure | Discover, filter and execute tests. |
+| [test.set_scope](#testset_scope) | Procedure | Select global or session vector storage on this connection. |
+| [test.vector](#testvector) | Procedure | Append one SQL argument list for a discovered test. |
+| [test.reset](#testreset) | Procedure | Delete vectors from the selected store. |
 | [test.log](#testlog) | Procedure | Write a formatted log message. |
 | [test.throw](#testthrow) | Procedure | Raise error 70000 with optional procedure context. |
 | [test.test](#testtest) | View | List test procedures and parsed naming metadata. |
@@ -410,6 +413,95 @@ EXEC test.run
 ```
 
 To run every discovered test, use `EXEC test.run;`.
+
+Registered vectors replace the single argumentless invocation with one call per
+stored row. Identical vectors remain separate calls. An unregistered procedure
+still executes once; the seven runner parameters are unchanged. Callbacks run before
+each case. Registrations and reporting metadata are captured before the first callback.
+Changing scope or registration rows in a callback affects later runs, not this run.
+
+Vector calls log start/completion events with the full EXEC in `@data`. Detail-grid
+columns stay unchanged; registered rows show the static-style name and unchanged
+parameters in parentheses, for example `power@vectors (-2,3,-8)`. Exact EXEC text
+remains in internal results and logger data, not in the displayed test name.
+Mixed/vector summaries distinguish selected procedures, planned cases and attempted
+cases. Errors stop at the existing failure limit after completion is logged.
+Missing source tables silently use static execution, without consulting the other store.
+There is no fixed case cap. Scalar snapshots/results must fit SQL's string and
+memory limits; native resource errors still propagate.
+
+### test.set_scope
+
+Selects vector storage for subsequent calls on this connection. **Global is the
+default:** no setter call is needed when the session-context key is unset.
+
+```sql
+EXEC test.set_scope @scope = N'global';  -- shared [test].[test_vectors]
+EXEC test.set_scope @scope = N'session'; -- caller-created #test_vectors
+```
+
+The required `nvarchar(max)` argument accepts exactly `global` or `session`;
+NULL, uppercase alternatives and padding are errors. The mutable session-context
+key is `ttest:vectors:scope`. Global means permanent storage in the current database,
+not `##` tables or a setting for other connections. The setter creates or clears
+nothing. On pooled/reused connections, explicitly choose the intended scope.
+
+### test.vector
+
+Appends one complete, trusted SQL argument list. SQL handles argument binding,
+defaults and conversions; the framework does not split or rewrite the text.
+Dimension registration is not implemented in this phase.
+
+```sql
+EXEC test.vector
+    @test_name = N'[tests].[test.assert_equals@vector_example]', -- nvarchar(max), required
+    @parameters = N'1, 1';                                   -- nvarchar(max), required
+```
+
+Use schema-qualified names of discovered tests in the current database; database/server
+qualification is rejected. Accepted names are stored in canonical quoted form.
+NULL or whitespace-only argument text is rejected. SQL literal text `NULL` and
+`N''` are valid arguments. Use Unicode literals inside the argument list when needed.
+The text is test code, not safe input from untrusted callers.
+
+Installation creates the global table if absent, using the same ordinary DDL on both
+platforms. Existing compatible tables and their saved rows are retained:
+
+```sql
+CREATE TABLE [test].[test_vectors] (
+    procedure_name varchar(2048) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL,
+    parameters varchar(max) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL
+);
+```
+
+Installation also inserts the four standard `[tests].[power@vectors]` cases if missing,
+without duplicating them on reinstall. The fifteenth built-in procedure and its vectors
+are deployed by both the shared installer and the SSDT project.
+
+For session storage, create `#test_vectors` with the same columns directly in the
+outer calling batch, then select `session`. Do not create it inside a setup procedure.
+Compatible user-defined types/storage options are allowed; extra columns need defaults
+or must permit NULL. Duplicate rows must be allowed. Storage APIs never provision
+or drop tables; uninstallation preserves the global table and data. Global definitions
+are shared and survive connection closure.
+
+If the table is unavailable to `OBJECT_ID`, registration prints a warning and suggested
+DDL, skips the call and returns before validating inputs. There is no scope fallback
+or permission-diagnosis layer; the user fixes setup. Native INSERT errors propagate.
+Serialize permanent edits during snapshot copying; concurrent read-only runs are supported.
+
+### test.reset
+
+Deletes all vector rows in the selected store and leaves the scope and table intact:
+
+```sql
+EXEC test.reset;
+```
+
+In global scope this deletes definitions shared by all users. Reset is maintenance,
+not a prerequisite for reading saved cases. An unavailable table is silently skipped.
+Native DELETE errors propagate. This phase resets vectors only.
+Global reset also clears the shipped POWER cases; reinstallation restores missing defaults.
 
 ### test.log
 
