@@ -1,11 +1,31 @@
-﻿# T-TEST
+# T-TEST
 
 A **lightweight, pure‑T‑SQL unit‑testing framework** for SQL Server. Drop‑in installation, zero external dependencies, CI‑friendly output.
 
-For signatures and examples, see the [API reference](api.md).
+For signatures and examples, see the [API reference](docs/api.md).
+
+For complete Arrange / Act / Assert recipes, see
+[static tests](docs/static-test-recipes.md), [data-driven vector tests](docs/data-test-recipes.md),
+and [dimension tests](docs/dimension-test-recipes.md).
 
 For the Fabric-oriented refactoring, see [Behavior changes](CHANGES.md), including
 intentional compatibility changes, bug fixes and verification limits.
+The [API naming migration](CHANGES.md#api-naming-cleanup) lists renamed procedures,
+functions and named arguments. Parameter order, types and defaults remain unchanged.
+
+## Source of truth and deployment
+
+`install.sql` is the authoritative source for framework objects, basic tests, and
+standard POWER registrations. Edit these definitions directly in that script;
+there is no separate database project or generated installer to synchronize.
+
+Install or upgrade by executing the complete script on SQL Server 2022+ or Fabric
+Warehouse. SSDT project builds and DACPAC deployment are no longer supported.
+Optional tests are maintained in their package scripts listed below; the installer
+retains its existing compatibility refreshes for already-installed optional tests.
+Those refreshes must stay consistent with their packages when changing those tests.
+When upgrading renamed APIs, rerun installed optional-package installers too; existing
+SELECT-star samples need the updated package to call `test.assert_query_schemas_equal`.
 
 ---
 
@@ -18,8 +38,9 @@ intentional compatibility changes, bug fixes and verification limits.
   * smart equality (ordered recordsets, `NULL`, numbers, JSON)
   * exception pattern matching
   * null / not‑null shortcuts
-* **Transactional isolation** – write tests as `BEGIN TRAN / ROLLBACK` so production data is never touched.
-* **Minimal footprint** – just helper functions in `test` schema and a view + runner.
+* **Caller-managed isolation** - use a dedicated test database and explicit transaction
+  cleanup where appropriate; the runner does not automatically isolate each test.
+* **Minimal footprint** – assertion procedures and predicate functions in `test`, plus a view + runner.
 * **CI‑ready** – `test.run` prints a concise summary and raises on failure, giving your pipeline a non‑zero exit code.
 
 ---
@@ -37,8 +58,9 @@ Simply execute the included **install.sql** script in the database you want to t
 The script will:
 
 1. **Create two schemas** that hold the framework internals and your tests (see table below).
-2. Register and run the **14 basic self-tests** at the end. On a fresh database,
-   the summary reports `14 tests of 14 executed. Succeded: 14, failed: 0, errors: 0`.
+2. Register and run **17 basic test procedures (25 cases with default registrations)**
+   at the end, including four POWER vectors and six REPLICATE dimension combinations.
+   All 25 cases are expected to pass; saved global registrations can change the count.
    Existing additional and user tests are retained, but are not executed by installation.
 
 | Schema  | Purpose                                                |
@@ -51,28 +73,54 @@ The script will:
 Use **[install.sql](install.sql)** for both SQL Server 2022+ and Fabric Warehouse.
 In the Fabric SQL query editor, paste the entire script and run it,
 including the `GO` batch separators. Use an account with permission to create
-schemas, views, functions and procedures.
+schemas, tables, views, functions and procedures.
+
+On SQL Server, installation, registration, reset and test runs require `ROWCOUNT 0`.
+If changed, issue `SET ROWCOUNT 0` directly in the calling batch beforehand.
+Do not issue `SET ROWCOUNT` on Fabric Warehouse; it is unsupported.
 
 The shared installer creates missing schemas and uses `CREATE OR ALTER` for
 framework objects and bundled tests. It can repair a partial installation without
-deleting existing user tests. It runs only the fourteen basic tests at the end,
+deleting existing user tests. It runs only the seventeen basic test procedures at the end,
 and prints completion only after the required objects exist and the
 test run returns successfully. Inspect all errors in Messages; installation is
 not atomic, and a later batch can run after an earlier batch fails.
 
+Run installation outside a transaction and stop on errors (for example, `sqlcmd -b`).
+The verification batch repeats the transaction guard before changing fixtures, preserving
+caller transactions even when a client continues after a preflight error.
+These guards raise error 50000 and return without rolling back caller data. On SQL Server,
+the raise runs in a scoped dynamic batch with `XACT_ABORT OFF`, preserving the caller's
+setting and committable transaction even when the error is caught by an outer TRY/CATCH.
+The Fabric branch does not issue `SET XACT_ABORT`.
+
+[uninstall.sql](uninstall.sql) has the same transaction guard. Run it outside a transaction
+to remove framework modules and the 72 shipped basic/framework/catalog/STDEV procedures.
+Schemas, custom tests, registry tables and their data are retained; cleanup is not atomic.
+Custom tests need the framework reinstalled before execution.
+
+Basic verification uses global scope on both engines. Fabric Warehouse (EngineEdition 11)
+does not support session scope; selecting it raises an error without reading session context.
+On SQL Server, verification restores the caller's original scope on success or failure.
+Installation creates `[test].[test_vectors]` if missing. It never alters an existing
+registry table or clears saved definitions. It inserts only missing standard POWER
+vectors; repeated installation does not duplicate them. Uninstallation preserves the table
+and data. Verification uses saved global vectors. It temporarily installs six REPLICATE dimension
+combinations, restores that procedure's saved domains, and drops the dimension table only if verification created it.
+
 The installer runs `test.log` as the caller, without `dbo` impersonation.
 Procedure names in logs depend on the caller's metadata visibility.
-The deployed runner and SSDT source omit `SET XACT_ABORT`. The installer footer
+The runner definition in `install.sql` omits `SET XACT_ABORT`. The installer footer
 calls the runner directly on Fabric (EngineEdition 11); elsewhere it executes `SET XACT_ABORT OFF`
 and `EXEC test.run` together inside one dynamic batch. Tests and their child
 procedures inherit that setting, and the caller's setting is restored afterward.
 A direct `EXEC test.run` outside this wrapper inherits the caller's setting instead.
-The installer and SSDT sources replace `@@PROCID`
+The installer replaces `@@PROCID`
 with explicit object-name lookups and avoid nested `FOR JSON` in discovery tests.
 There is one installer, without `WITH INLINE = AUTO`.
 JSON equality uses `OPENJSON` and a join, not normalization.
-Use standalone assertions, such as `SELECT test.assert_equals(...);`, with
-precomputed scalar inputs.
+Use assertion procedures, such as `EXEC test.assert_equals N'Result', 1, @actual;`.
+Compute expressions or scalar queries into variables before passing them to `EXEC`.
 
 The formatter omits date/binary type detection on both platforms.
 Convert dates and binary values to text explicitly, as shown below. The runner
@@ -85,11 +133,15 @@ permission, transaction and validation limitations.
 The previous installer and extended suite passed in a user-reported Fabric Warehouse
 run. The latest review fixes still require execution there.
 Rerun the complete `install.sql`, then the complete coverage file below.
+Current native release checks run on SQL Server, not Fabric. In particular,
+the scalar `FOR JSON` data-capture paths have a documented Warehouse restriction;
+see [Comparing two SELECT statements](#comparing-two-select-statements).
 
 ### Basic verification and additional packages
 
-The basic procedures live in `Source (SSDT project)\tests\Stored Procedures` and
-are included in `install.sql`. They use small, static cases:
+The basic procedure definitions live directly in `install.sql`.
+Fifteen use static cases; POWER uses four registered
+vectors and REPLICATE uses six temporary dimension combinations:
 
 | Basic test | Checks |
 |---|---|
@@ -99,7 +151,8 @@ are included in `install.sql`. They use small, static cases:
 | `test.throw` | THROW, raw errors, fail/no-error helpers and error-number/pattern assertions. |
 | `test.assert_equals` | Equal values/NULLs and a caught mismatch. |
 | `test.assert_float_equals` | Inclusive absolute tolerance, NULLs, invalid tolerance and extreme FLOATs. |
-| `test.assert_resultset_equals` | Compare ordered sys.objects/sys.tables results, including NULLs and typed columns. |
+| `test.assert_resultset_equals` | Compare ordered catalog results; independently reject different values and NULL versus absent columns. |
+| `test.assert_query_schemas_equal` | Compare query schemas, explicit signatures, CTEs and caught schema mismatches. |
 | `test.assert_error` | Optional error number, LIKE message pattern and state; absent/sentinel errors are rejected. |
 | `test.assert_not_null` | Ordinary/empty bytes and a caught NULL rejection. |
 | `test.assert_null` | NULL and a caught non-NULL rejection. |
@@ -107,20 +160,23 @@ are included in `install.sql`. They use small, static cases:
 | `sys.objects@tables` | All 12 shared catalog columns plus schema name, including NULLs. |
 | `stdev@basic` | Known sample deviation and one/zero-value NULL boundaries. |
 | `data_types@basic` | Independently defined rows of numeric, temporal, text, binary, GUID, NULL and spatial values. |
+| `power@vectors` | POWER with vectors `2,3,8`, `3,2,9`, `5,0,1` and `-2,3,-8`, saved globally at installation. |
+| `replicate@dimensions` | REPLICATE byte lengths for two counts and three strings; verification temporarily registers six combinations. |
 
 These are functional self-tests, not exclusively integration tests. They exercise
-all eleven scalar functions, the logger/throw helpers, discovery and the runner;
+all nine scalar functions, assertion procedures, logger/throw helpers, discovery and the runner;
 this is not measured line/branch coverage. Expected scalar-UDF failures run outside
-explicit transactions. Each test prints two description lines of at most 60 characters.
+explicit transactions. Most basic tests print two short description lines;
+`replicate@dimensions` does not.
 
 Basic tests use inline values and separate Arrange, Act and Assert where useful.
 Assertion-only examples omit unnecessary setup, JSON case matrices and loops.
 Scenario tests use framework assertions: catalog queries capture ordered results
 with `SET @json = (SELECT ... FOR JSON PATH)`, and STDEV tests use `assert_null`
 or `assert_float_equals` with an absolute tolerance. Framework self-tests use independent comparisons
-and `THROW` so a broken assertion cannot validate itself. Value/float assertions
-return `N''` on success; error assertions return NULL. Assigning results avoids empty grids.
-The query-comparison procedure returns no result grid and is called with `EXEC`.
+and `THROW` so a broken assertion cannot validate itself. All assertions use `EXEC`,
+return no result grid on success, and raise error 70001 on failure. The `is_*`
+predicates return bit 1/0 without asserting.
 
 SYS catalog pairs compare every shared column, including integer IDs, datetime
 timestamps and bit flags; none has a shared FLOAT column. INFORMATION_SCHEMA pairs
@@ -130,34 +186,120 @@ Unicode and long strings. Its geometry/geography variables are compared through
 `STAsText()` and SRID because `FOR JSON` cannot serialize spatial types directly.
 JSON/XML values are excluded; JSON is only the comparison transport.
 
-Install optional packages after `install.sql`. Each script registers and
-runs its own package; the framework package also runs the fourteen basic tests.
+Test scripts are grouped by purpose:
 
-| Script | Additional tests | Execution |
-|---|---:|---|
-| [install-framework-coverage-tests.sql](install-framework-coverage-tests.sql) | 14 | 28 basic/positive tests plus 49 runner/framework scenario groups. |
-| [install-compare-resultset-tests.sql](install-compare-resultset-tests.sql) | 12 | Additional catalog comparisons; the tables comparison is already basic. |
-| [install-stdev-tests.sql](install-stdev-tests.sql) | 27 | LOG/SIN/value series at sizes 0 through 100,000. |
+```text
+tests\
+  regression\          Framework, runner, installation, vector and dimension checks
+  samples\
+    catalog\           Ordered result comparisons over system catalogs
+    stdev\             Data-driven numerical examples
+    select-star\       Fabric SELECT-star schema examples
+```
 
-All packages together provide 67 distinct procedures. Reinstallation still runs
-only the fourteen basic tests. `EXEC test.run;` retains its existing meaning: run every
+The basic verification procedures remain embedded in the root `install.sql`, keeping
+one deployment source. Folder names do not change SQL schemas or test selection.
+Paths below are relative to the repository root; the PowerShell harnesses also work
+from other working directories because they resolve dependencies from their own files.
+
+Install optional packages after `install.sql`, then execute their paired run scripts.
+The four optional installers create procedures without executing tests. The framework
+installer also adds missing standard global vectors without clearing existing registrations.
+None of these packages requires new dimension domains. The main `install.sql`
+still installs the framework and runs basic verification.
+
+| Group | Install | Additional tests | Run | Coverage |
+|---|---|---:|---|---|
+| Regression | [install-framework-coverage-tests.sql](tests/regression/install-framework-coverage-tests.sql) | 16 | [run-framework-coverage-tests.sql](tests/regression/run-framework-coverage-tests.sql) | 49 scenario groups, including 33 basic/positive procedures (41 cases). |
+| Sample: catalog | [install-compare-resultset-tests.sql](tests/samples/catalog/install-compare-resultset-tests.sql) | 12 | [run-compare-resultset-tests.sql](tests/samples/catalog/run-compare-resultset-tests.sql) | All installed `sys`-schema tests: 13 shipped comparisons, including basic tables. |
+| Sample: STDEV | [install-stdev-tests.sql](tests/samples/stdev/install-stdev-tests.sql) | 27 | [run-stdev-tests.sql](tests/samples/stdev/run-stdev-tests.sql) | All installed `stdev` concept tests: 28 shipped cases, including basic. |
+| Sample: SELECT-star | [install-select-star-tests.sql](tests/samples/select-star/install-select-star-tests.sql) | 50 | [run-select-star-tests.sql](tests/samples/select-star/run-select-star-tests.sql) | Explicit-query oracles for SELECT-star projections; no CTAS tests. |
+
+The standalone [vector-tests.sql](tests/regression/vector-tests.sql) and
+[dimension-tests.sql](tests/regression/dimension-tests.sql) remain execution suites with
+37 and 29 scenarios.
+They create and clean disposable fixtures in a clean test database/session.
+
+### Local release check (SQL Server)
+
+Run the complete local test group with one command:
+
+```powershell
+.\tests\regression\run-regression-tests.ps1 -Server '.\SQLEXPRESS' -MutationChecks
+```
+
+Requires PowerShell, `sqlcmd`, Windows authentication and SQL Server 2022+ permission
+to create a database. The harness creates a uniquely named database and drops only that
+database in `finally`, including on failure. It never reuses an existing database.
+Large dimension-limit cases can take several minutes.
+
+The check includes installation/uninstallation, all SQL regression suites, runner
+selection, catalog/STDEV samples and all 72 bundled procedures (80 cases). The
+SELECT-star package is installed but its Fabric-only syntax is not executed locally.
+Test groups overlap; their counts must not be added into a coverage percentage.
+
+Additional focused checks:
+
+| Harness | Checks |
+|---|---|
+| [assertion-tests.sql](tests/regression/assertion-tests.sql) | 62 independent cases: result values/counts/order, missing versus NULL properties, long results, query errors, schema signatures/types/lengths/scales, blank arguments and probe cleanup. |
+| [logger-tests.ps1](tests/regression/logger-tests.ps1) | 13 exact InfoMessage/PRINT checks: formatting, NULL/empty data, literal `%`, inline boundaries, long chunks, trailing spaces, Unicode and metadata tails. |
+| [installation-tests.ps1](tests/regression/installation-tests.ps1) | Rejected install/uninstall calls with XACT_ABORT OFF/ON, with and without outer CATCH; legacy retirement; repeated uninstall preserving user objects and both registry multisets. Run before optional installation. |
+
+`-MutationChecks` also replaces each of `assert_resultset_equals`, `get_query_schema`,
+`assert_schema_signature`, `assert_query_schemas_equal` and `log` with a signature-preserving `RETURN`
+inside the owned database. Each must be detected by its tests. The original definitions
+are restored and rechecked. This is five selected mutation controls, **not** measured
+line/branch coverage or a comprehensive mutation score.
+
+### Package selection
+
+The catalog and STDEV installers retain their existing procedure generators. Framework
+definitions remain conditionally generated after preflight. Run scripts do not install
+persistent procedures or register cases; disposable framework scenario helpers are created
+only during execution and then cleaned up.
+
+Run scripts discover their groups rather than repeat every procedure name. Catalog tests
+use `test.run @test_schemas = N'tests', @test_object_schemas = N'sys'`. STDEV tests have no
+object schema, so their runner selects the `[tests].stdev@%` name pattern.
+SELECT-star tests use their own procedure schema and
+run with `test.run @test_schemas = N'select_star'`. New tests in these groups are included automatically.
+The framework suite deliberately retains a single positive-test list: schema-wide discovery
+would include unrelated user tests or deliberately failing runner probes.
+
+`@test_schemas` filters **test-procedure containers**. `@test_object_schemas` filters the parsed
+tested-object schema instead. Existing object-filter calls must migrate to the latter.
+With no selectors, `EXEC test.run;` still runs only procedures in `tests`.
+
+The basic and three retained optional packages together provide 72 distinct procedures:
+17 basic + 16 framework + 12 catalog + 27 STDEV. The independent SELECT-star package
+is not included in this count. Reinstallation still runs only the seventeen basic
+procedures. `EXEC test.run;` retains its existing meaning: run every
 discovered test, including optional and user tests. The basic naming validator
 still checks all registered names, even when only basic tests are selected.
 
 ### JSON result comparison
 
-`test.is_equal` retains its text/NULL and numeric-string shortcuts. Otherwise,
+`test.is_equal` retains its text/NULL and lossless numeric-string shortcuts. Otherwise,
 valid JSON is compared by `test.is_json_equal`: integer row index, property
 name, raw value and JSON type. Row order matters; property order does not. Use
 matching `ORDER BY` clauses when building the two result sets. JSON numbers such
 as `1` and `1.0`, and different date-string formats, are not converted to a common
 representation. Values follow SQL comparison rules, including collation/padding.
 
+Scalar numeric-string equality is limited: its `decimal(30,20)` shortcut rejects lossy
+fractional conversions instead of rounding different tiny values into equality. Equivalent
+spellings beyond that precision may compare unequal. Do not use
+`assert_equals` as an arbitrary-precision numeric comparator. For FLOAT inputs use
+`assert_float_equals` with an explicit absolute tolerance; for exact decimal values,
+compare typed values independently and assert the resulting bit. See the
+[numeric comparison contract](docs/api.md#testis_equal).
+
 This is a shallow comparison for result sets with unique column names of at most
 128 characters, not recursive JSON equality. The normalizer and experimental
 scripts are removed. Reinstallation retires the obsolete framework-owned
 normalization tests; unrelated user tests remain. Run
-**[install-compare-resultset-tests.sql](install-compare-resultset-tests.sql)** for
+**[install-compare-resultset-tests.sql](tests/samples/catalog/install-compare-resultset-tests.sql)** for
 12 additional ordered catalog comparisons, alongside the basic tables comparison.
 
 ### Comparing two SELECT statements
@@ -177,16 +319,92 @@ EXEC test.assert_resultset_equals
 ```
 
 Supply one SELECT statement per string, without an existing `FOR JSON` clause.
-An optional final semicolon and surrounding whitespace are accepted. CTEs and
-multiple-statement batches are not supported. Use matching `ORDER BY` clauses;
+An optional final semicolon and surrounding whitespace are accepted. CTEs,
+top-level set operators and multiple-statement batches are not supported.
+Put UNION/EXCEPT/INTERSECT inside a derived table instead. Use matching `ORDER BY` clauses;
 row order matters, but column order does not. NULL properties are retained.
 Empty results compare as `[]`, without comparing their column metadata.
+
+**Fabric limitation:** this data helper, the catalog/data samples and some basic tests
+capture scalar `FOR JSON` subqueries, which the documented Warehouse surface does not
+support. SQL Server success does not validate those paths on Fabric. Schema assertions
+avoid that construct; Fabric execution, including extended SELECT-star operators, still
+requires a separate endpoint run.
 
 Queries execute sequentially as the caller and must be trusted SQL, not untrusted
 user input; this helper does not enforce read-only access. Caller-local variables
 are not visible inside the dynamic batches. Use stable data or an appropriate
 caller transaction when consistency across both reads matters. Mismatches raise
 normal assertion failures; SQL execution errors propagate unchanged.
+
+### Comparing SELECT schemas
+
+Use `test.assert_query_schemas_equal` for two queries, or `test.assert_schema_signature` for a
+query and an explicit schema. They compare ordered column names and base SQL
+types, including lengths, precision and scale, without reading result rows.
+Column names are case-sensitive; nullability and collations are not compared.
+
+```sql
+EXEC test.assert_query_schemas_equal N'Projection',
+    N'SELECT CAST(1 AS int) AS id, CAST(NULL AS varchar(20)) AS name',
+    N'SELECT CAST(99 AS int) AS id, CAST(''alpha'' AS varchar(20)) AS name';
+
+EXEC test.assert_schema_signature N'Expected columns',
+    N'[id] int, [name] varchar(20)',
+    N'SELECT CAST(1 AS int) AS id, CAST(NULL AS varchar(20)) AS name';
+```
+
+Queries must be trusted, single, view-compatible SELECTs with unique named
+columns. CTEs are supported; ORDER BY needs TOP or OFFSET. The caller needs
+`CREATE VIEW` and permission to alter schema `test`: the shared metadata reader
+creates and cleans a uniquely named view without materializing data. This avoids
+Fabric's scalar `FOR JSON` restriction. See [API details](docs/api.md#testassert_query_schemas_equal).
+
+The independent [SELECT-star package](tests/samples/select-star/install-select-star-tests.sql) uses these
+built-in assertions for 50 query-contract tests over system views, mainly `sys.objects`.
+Every test follows AAA: Arrange hardcodes an explicit reference SELECT, Act prepares
+the SELECT-star query, and Assert compares ordered names and types with
+`test.assert_query_schemas_equal`. Reference columns are never generated from the actual
+query or catalog metadata. Basic operators and combinations come first, using direct
+`SELECT ... FROM sys.objects` queries that differ only in their SELECT lists. Derived
+inputs and `WITH` are reserved for the marked edge cases that specifically test
+nested query contexts.
+
+| Area | Contracts |
+|---|---|
+| Individual operators | LIKE/NOT LIKE percent, underscore, escaped underscore and bracket patterns; EXCLUDE first/last/multiple columns; RENAME aliases and order; REPLACE expressions, date/length/precision changes |
+| Combinations | LIKE with EXCLUDE, RENAME or REPLACE; NOT LIKE with RENAME/REPLACE; EXCLUDE/RENAME/REPLACE; RENAME/REPLACE; the full filter/exclude/rename/replace chain |
+| Query contexts | Qualified and multiple stars, joins, derived queries, CTE chains, UNION ALL, DISTINCT, TOP/WHERE, empty inputs, correlated expressions, aggregates, PIVOT and UNPIVOT |
+| Value checks | Four REPLACE cases also use `test.assert_resultset_equals` on the single `test.run` catalog row, including a same-type replacement that metadata alone cannot detect |
+
+Both query strings are independently written, with the expected aliases, expressions
+and column order visible beside the operator being tested. The single-row value checks
+avoid row-order ambiguity and concurrent metadata-probe rows. Tests create no input
+tables, insert no fixtures and contain no transaction checks; schema assertions still
+create and clean metadata views.
+The four CTAS tests are removed, including their old procedures during package upgrades.
+This package no longer covers table materialization.
+
+Install the updated framework first, then the package; execute
+[run-select-star-tests.sql](tests/samples/select-star/run-select-star-tests.sql) to call the standard runner for its
+schema; the shipped package contains 50 procedures. Native runner reporting, failure limits,
+vectors and dimensions now apply. Nonzero RETURN codes retain the framework's existing
+non-error meaning. Individual calls such as
+`EXEC select_star.test_like_suffix;` still work. `EXEC test.run;` does not include this
+schema unless explicitly selected.
+
+For SQL Server, [installation-tests.ps1](tests/regression/installation-tests.ps1) verifies legacy-sentinel
+upgrade cleanup and preservation of caller transactions. It reinstalls the framework;
+use an existing dedicated test database.
+
+For SQL Server, [runner-tests.ps1](tests/regression/runner-tests.ps1) verifies standalone script discovery,
+isolation, schema/pattern filters, escaped names, registrations and empty selection. It uses
+Windows authentication, requires an existing dedicated test database, and removes only its
+uniquely named probe objects. It does not verify Fabric's SELECT-star syntax.
+
+```powershell
+.\tests\regression\runner-tests.ps1 -Server '.\SQLEXPRESS' -Database 'your_dedicated_test_database'
+```
 
 ### Explicit message formatting
 
@@ -213,11 +431,17 @@ text conversion, not the former date/hex formatting.
 
 ### Extended Fabric framework tests
 
-After installation, execute the entire
-**[install-framework-coverage-tests.sql](install-framework-coverage-tests.sql)**
-in one test-Warehouse session, including **every `GO` batch**. It creates fourteen
-positive test procedures, runs them with the fourteen basic tests, and exercises
-runner behavior using temporary fixtures. The final two result grids show
+After `install.sql`, execute the entire
+[install-framework-coverage-tests.sql](tests/regression/install-framework-coverage-tests.sql), including
+every `GO` batch. It installs sixteen positive procedures and adds missing standard
+global vectors: four POWER and six typed-argument cases. Repeating installation adds
+no duplicate standard vectors and preserves the caller's SQL Server scope.
+
+Then execute the entire
+**[run-framework-coverage-tests.sql](tests/regression/run-framework-coverage-tests.sql)** in one dedicated
+test-Warehouse session, including **every `GO` batch**. It runs these tests with all
+seventeen basic procedures and exercises
+runner behavior using disposable fixtures. The final two result grids show
 `scenario/status/detail` and `coverage_result/failed_groups/known_bug_groups`.
 
 | Area | Scenarios |
@@ -225,13 +449,23 @@ runner behavior using temporary fixtures. The final two result grids show
 | Each assertion and error/fail helper | Success, expected failures, NULL boundaries, error numbers/patterns and no-error markers |
 | Equality and JSON comparison | Raw numeric/date spelling, JSON types, ordered rows, property ordering, missing/NULL fields, Unicode, large values |
 | Formatting | All parameter positions, explicit ISO/hex text, NULL/default values, Unicode, repeated placeholders and date/hex-like text |
-| Logger | NULL, formatted parameters, inline/multiline/chunked output; PRINT text is a smoke check, not automatically captured |
+| Logger | SQL smoke checks plus 13 exact output checks in the separate local PowerShell harness |
+| Vector scope and arguments | Mutable session/global context, rejected scope values, BIGINT limits, decimal/scientific literals, bit, Unicode/quotes/commas, date/datetime2, binary, NULL and DEFAULT |
 | Runner | Discovery, filters, custom/default logger, callbacks, snapshot selection, result classification, rollback, failure limits, RETURN codes, duplicates and reporting errors |
+
+On both engines the positive run reads installed global vectors without registering or
+replacing them. SQL Server restores the caller's scope; Fabric skips mutable-session-scope
+checks. Pre-existing caller registration tables are rejected without changing their contents.
+The runner rejects missing standard vectors and asks for reinstallation. Use a dedicated
+test database with only the standard registrations for the selected procedures: extra
+vectors or dimension domains change the strict 41-case expectation and fail completeness.
+Unrelated registrations are neither selected nor cleared. After explicitly resetting its
+vectors, the typed test can also check its default arguments.
 
 There are **49 scenario groups**, not measured 100% line/branch coverage.
 The expected result is **`PASSED`, zero failed groups and zero known bugs**; the
-`known_bug_groups` column is retained for result-shape compatibility. All twenty-eight
-positive/bundled test procedures must succeed. See [Behavior changes](CHANGES.md)
+`known_bug_groups` column is retained for result-shape compatibility. All thirty-three
+positive/bundled procedures (41 cases) must succeed. See [Behavior changes](CHANGES.md)
 for the corrections and the ordered/raw JSON comparison contract.
 
 **Expected errors are intentional:** the final duplicate probe emits error 50000
@@ -272,41 +506,50 @@ For a concept rather than a physical database object, use `[tests].[<object>@<ac
 for example `[tests].[stdev@sin_1000]`. Both parts are required. The naming validator
 skips object-existence checks for this form; schema-qualified names retain their
 existing checks. No default target schema is assigned, and dots after `@` belong to
-the action. Conceptual tests run normally but are not selected by `@schemas` filters.
+the action. Conceptual tests run normally under container `@test_schemas` filters; they have
+no object schema to match `@test_object_schemas`.
 
-`install-stdev-tests.sql` registers 27 additional such tests. Rerunning it replaces its legacy
+[install-stdev-tests.sql](tests/samples/stdev/install-stdev-tests.sql) registers 27
+additional such tests. Rerunning it replaces its legacy
 `math.stdev@...` procedures with `stdev@...` names, without removing unrelated tests.
 On an existing installation with the legacy names, rerun that file before reinstalling
 the framework because the basic naming validator still inspects those old targets.
 
-#### Why wrap tests in a `BEGIN TRAN / ROLLBACK`
+#### Use AAA and choose cleanup explicitly
 
-> **Most T‑TEST samples open a transaction at the very top and roll it back at the end.**
->
-> • **Self‑contained execution** – you (or CI) can simply `EXEC [tests].[…]` and the procedure cleans up after itself, leaving no side‑effects.
->
-> • **Transaction‑aware flows** – Service Broker dialogs, SQL Agent jobs started with `sp_start_job`, and any trigger‑spawned work all participate in the same transaction, so you can assert on their behaviour *before* the rollback.
->
-> • **Zero data pollution** – production tables remain untouched even if the test inserts millions of rows.
+Keep declarations and boilerplate before `-- Arrange`, prepare inputs and independent
+expectations in Arrange, execute the behavior in Act, and verify it in Assert.
+The [three recipe pages](docs/static-test-recipes.md) use built-in functions and do not
+modify application data.
 
-Example:
+For tests that write transactional data, use explicit rollback on success and failure.
+The following application-specific example requires `sales.usp_create_order` and its
+test fixtures to exist; it is not a standalone built-in recipe:
 
 ```sql
 CREATE OR ALTER PROCEDURE [tests].[sales.usp_create_order@happy_path]
 AS
-BEGIN TRAN
-    ------------------------------------------------------------------
-    -- arrange
-    DECLARE @customer_id int = 1;
-    DECLARE @order_id   int;
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @customer_id int, @order_id int, @order_bytes varbinary(max);
 
-    -- act
-    EXEC @order_id = sales.usp_create_order @customer_id;
+    -- Arrange
+    SET @customer_id = 1;
+    BEGIN TRAN;
+    BEGIN TRY
+        -- Act
+        EXEC @order_id = sales.usp_create_order @customer_id;
+        SET @order_bytes = CONVERT(varbinary(max), @order_id);
 
-    -- assert
-    SELECT test.assert_not_null('Order id must be generated',
-                                @order_id);
-ROLLBACK;
+        -- Assert
+        EXEC test.assert_not_null N'Order id must be generated', @order_bytes;
+        ROLLBACK;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK;
+        THROW;
+    END CATCH;
+END;
 ```
 
 Any uncaught exception fails the test automatically.
@@ -321,20 +564,27 @@ T‑TEST provides two convenient ways to execute your tests:
 #### 1. Using `test.run`
 
 ```sql
--- run absolutely everything
+-- run all tests in the default tests container
 EXEC test.run;
 
--- run only tests that target objects in the sales schema
-EXEC test.run @schemas = N'sales';
+-- run all test procedures contained in the sales schema
+EXEC test.run @test_schemas = N'sales';
+
+-- run tests of objects in sales, stored in the tests container
+EXEC test.run @test_object_schemas = N'sales';
+
+-- run all procedures in a quoted schema through a LIKE pattern
+EXEC test.run @test_names = N'[select_star].%';
 
 -- run a specific test and stop on first failure
 EXEC test.run
       @test_names        = N'[tests].[sales.usp_create_order@happy_path]|[tests].[inventory.adjust_stock@edge_case]',
       @exclude_test_names = N'[tests].[obsolete.some_legacy_test]',
-      @schemas            = N'sales,inventory',
-      @exclude_schemas    = N'legacy',
-      @limit_failed       = 5,              -- stop after 5 failures
-      @before_callback    = N'SET NOCOUNT ON',
+      @test_schemas       = N'tests',
+      @test_object_schemas = N'sales,inventory',
+      @exclude_test_object_schemas = N'legacy',
+      @max_failures       = 5,              -- stop after 5 failures
+      @before_each_sql    = N'SET NOCOUNT ON',
       @log_proc_name      = N'test.log';
 
 ```
@@ -363,15 +613,76 @@ counts, failure limits and the second result table (duration by schema) are unch
 
 #### 2. Executing a test procedure directly
 
-Because most tests are wrapped in `BEGIN TRAN / ROLLBACK`, you can execute a single test in SSMS without leaving data behind:
+You can execute a single static test directly. Cleanup is the test's responsibility;
+direct execution does not add a transaction or invoke runner callbacks:
 
 ```sql
 EXEC [tests].[sales.usp_create_order@happy_path];
 ```
 
-Perfect for quick debugging and exploratory runs.
+Parameterized tests need arguments when executed directly; use the runner to replay
+their saved vectors or dimensions.
 
 ---
+
+### Vector parameters
+
+**Global storage is the default.** Installation provisions the table; register trusted
+SQL argument lists and keep using the existing `test.run` interface.
+
+```sql
+CREATE OR ALTER PROC [tests].[test.assert_equals@vector_example]
+    @expected nvarchar(max), @actual nvarchar(max)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @equal bit;
+
+    -- Arrange
+    --N/A
+
+    -- Act
+    SET @equal = test.is_equal(@expected, @actual);
+
+    -- Assert
+    EXEC test.assert_equals N'Vector predicate must report equality', 1, @equal;
+END;
+GO
+
+EXEC test.vector N'[tests].[test.assert_equals@vector_example]', N'1, 1';
+EXEC test.vector N'[tests].[test.assert_equals@vector_example]', N'NULL, NULL';
+EXEC test.run @test_names = N'[tests].[test.assert_equals@vector_example]';
+```
+
+Every stored row executes, including duplicates. Procedures without registrations retain
+their single static call. Saved global cases can be run from later connections.
+On SQL Server, for ad hoc cases, create `#test_vectors` with the columns documented in the API.
+Create it in the calling batch and call `EXEC test.set_registration_scope N'session';` once on that connection.
+No scope parameter is added to registration, reset or run.
+Fabric Warehouse supports global scope only; `test.set_registration_scope N'session'` raises an error.
+
+`EXEC test.clear_registrations;` clears vectors and dimensions only in the chosen store, without dropping tables or changing
+scope. Global reset affects every user sharing those definitions. Missing tables warn
+and skip registration; the runner/reset silently continue without that source.
+Reset also removes the shipped POWER vectors; rerun `install.sql` to restore them.
+Use `EXEC test.clear_registrations @test_name = N'[tests].[WELCH_TEST@generate_series]';`
+to clear only one procedure's vectors and dimensions in that store.
+See [vector APIs](docs/api.md#testvector) for storage, logging and trust-boundary details.
+
+### Dimension parameters
+
+Use `test.dimension` for independent parameter domains. Two values for `@number`
+and three for `@text` produce six named-argument calls to `replicate@dimensions`.
+Explicit vectors run first and are added to, not multiplied by, that product.
+Duplicate values remain separate cases.
+
+Create `[test].[test_dimension_values]` yourself for global storage, or
+`#test_dimension_values` in the calling batch for session storage on SQL Server. See the
+[dimension API example](docs/api.md#testdimension) for the table definition and registration.
+The installer checks the built-in REPLICATE example using temporary global domains,
+restores saved domains, and removes dimension storage only if it created it.
+The mixed session/global vector and dimension diagnostic suites skip on Fabric Warehouse;
+the installer's global examples still run.
 
 ## 📦 Example project
 
@@ -387,10 +698,14 @@ Explore the `tests` folder to see real‑world tests written with the patterns s
 
 ### Why wrap in `BEGIN TRAN … ROLLBACK`
 
-1. **Run the test ad‑hoc** – simply `EXEC [tests].[…]` and the transaction guarantees nothing sticks; perfect for quick debugging.
-2. **Automatic cleanup** – no teardown code needed; the rollback wipes inserts, updates, temp tables, and even sequence increments.
-3. **Deterministic, repeatable runs** – each execution starts from the same state, avoiding flaky tests caused by leftover data.
-4. **Safety in shared dev databases** – parallel testers can run suites concurrently without clobbering each other’s data.
+1. **Transactional cleanup** - rollback can undo participating inserts, updates and
+   transactional DDL; handle both success and failure explicitly.
+2. **Known exceptions** - identity/sequence values consumed during a test are not
+   restored by rollback. External effects and other sessions are not rolled back.
+3. **Repeatability** - use controlled fixtures; a transaction alone does not guarantee
+   an identical starting state or prevent blocking and interference.
+4. **Shared databases** - coordinate global registrations and schema changes.
+   Prefer dedicated disposable test databases over production or shared mutable data.
 
 ### When *not* to wrap
 
@@ -405,6 +720,10 @@ In those cases, omit `BEGIN TRAN / ROLLBACK` and either:
 
 * Run against disposable test data, or
 * Add explicit cleanup at the end of the test.
+
+Neither approach automatically undoes external effects. The runner rejects an existing
+caller transaction and, on SQL Server, implicit transactions; tests manage their own
+transactions. Fabric Warehouse supports global registration scope only.
 
 ---
 
@@ -421,7 +740,7 @@ BEGIN TRAN
     EXEC @result = math.add @a = 20, @b = 22;
 
     -- Should return 42
-    SELECT test.assert_equals('20 + 22 must be 42', 42, @result);
+    EXEC test.assert_equals N'20 + 22 must be 42', 42, @result;
 ROLLBACK;
 ```
 
@@ -431,21 +750,10 @@ ROLLBACK;
 CREATE OR ALTER PROCEDURE [tests].[api.get_users@ordering]
 AS
 BEGIN TRAN
-    /*
-       Compare the JSON produced by the procedure directly with the expected
-       literal – no @expected/@actual temp vars necessary because helpers are
-       **functions**.
-    */
-    SELECT test.assert_equals(
-        'Users must match',
-        (
-            SELECT *
-            FROM (VALUES (1, N'Ann'), (2, N'Bob')) v(id, name)
-            ORDER BY id
-            FOR JSON PATH
-        ),
-        (SELECT * FROM dbo.get_users() ORDER BY id FOR JSON PATH)
-    );
+    EXEC test.assert_resultset_equals
+        N'Users must match',
+        N'SELECT * FROM (VALUES (1, N''Ann''), (2, N''Bob'')) v(id, name) ORDER BY id',
+        N'SELECT * FROM dbo.get_users() ORDER BY id';
 ROLLBACK;
 ```
 
@@ -462,9 +770,8 @@ BEGIN TRAN
         EXEC test.fail_no_error;
     END TRY
     BEGIN CATCH
-        SELECT test.assert_error(
-            N'Invalid customer validation',
-            50001, N'%invalid customer%', DEFAULT);
+        EXEC test.assert_error N'Invalid customer validation',
+            50001, N'%invalid customer%', DEFAULT;
     END CATCH;
 ROLLBACK;
 ```
@@ -488,26 +795,30 @@ ROLLBACK;
 
 ## 🧪 Implementation tricks
 
-### 1. **Assertions as functions**
+### 1. **Assertion procedures reuse predicates**
 
-Most assertion helpers (`test.assert_equals`, `test.assert_error`, `test.fail`)
-are **scalar functions**. The dynamic query helper `test.assert_resultset_equals` is a
-stored procedure because functions cannot execute dynamic SQL.
-Why this matters:
-
-* You can embed assertions directly into `SELECT` lists or `WHERE` clauses.
-* Functions accept *expressions* and *sub‑queries* as arguments. Example: pass an on‑the‑fly recordset as JSON without staging it in a temp table.
-* Classic procedure‑style helpers (like in tSQLt) would force extra variables / temp objects.
+Every `assert_*` helper is a stored procedure. Value assertions call the corresponding
+`is_*` bit predicate and fail only when it returns 0. `assert_equals` uses the canonical
+`is_equal`; `is_equals` remains a compatibility alias. `assert_error` directly
+checks the current CATCH context; it has no `is_error` counterpart.
 
 ```sql
-SELECT test.assert_equals('Rows must match',
-        (SELECT * FROM @expected FOR JSON PATH),
-        (SELECT * FROM dbo.get_users() FOR JSON PATH));
+SELECT test.is_equal(N'001.50', N'1.5'); -- 1, no assertion
+EXEC test.assert_equals N'Values must match', N'001.50', N'1.5';
 ```
 
-### 2. **Throwing from a function**
+Assertions raise native error 70001 with the `Unit-test fail:` marker through
+`test.throw`; the runner distinguishes this from unexpected errors. Compute expression
+arguments into local variables before `EXEC`, or use `assert_resultset_equals` for queries.
+This replaces the scalar assertion API: custom `SET @r = test.assert_*(...)` and
+`SELECT test.assert_*(...)` callers must migrate to `EXEC`. The installer refreshes
+shipped callers, but does not rewrite user tests.
+Likewise, replace `SET @r = test.fail_no_error()` with `EXEC test.fail_no_error;`.
 
-SQL Server forbids `RAISERROR` / `THROW` inside scalar UDFs. T‑TEST sneaks around this rule with a type‑mismatch trick:
+### 2. **Legacy failures from a function**
+
+The retained `fail` and `throw_error` functions still use a type-mismatch
+trick because SQL Server forbids `THROW` inside scalar UDFs. Assertions no longer need it:
 
 ```sql
 IF TRY_CAST(LEFT(@error_message, 4000) AS int) IS NOT NULL
@@ -547,6 +858,10 @@ The view `[test].[test]` parses procedure names in the `tests` schema to locate:
 * An optional **action tag** after `@`.
 
 No extra metadata tables are needed; naming convention = registration.
+The neutral `[test].[test_procedures]` view exposes the same parsed metadata plus procedure
+schema and ID across all containers; `test.run` uses it for explicit schema/name selection.
+Explicit selectors treat every matching stored procedure as a test. Use dedicated test
+schemas: an unrestricted `%` pattern can also select application or framework procedures.
 
 ```sql
 -- list all registered tests with their target objects and parsed metadata
@@ -559,21 +874,22 @@ FROM   test.test;
 A concise pattern for verifying that a call *does* raise the expected error and that the error’s properties are correct.
 
 1. **Act** – run the statement expected to fail.
-2. **Sentinel** - `EXEC test.fail_no_error;` immediately after; missing errors fail the test.
+2. **Sentinel** - execute `test.fail_no_error` immediately after; missing errors fail the test.
 3. **Assert** - inside `CATCH` use `test.assert_error` with the required filters.
 
 ```sql
 BEGIN TRY
     EXEC sales.usp_create_order @customer_id = -1;  -- (1) act
-    EXEC test.fail_no_error;                       -- (2) sentinel
+    EXEC test.fail_no_error; -- (2) sentinel
 END TRY
 BEGIN CATCH                                         -- (3) assert
-    SELECT test.assert_error(
-        N'Invalid customer validation', 50001, N'%invalid customer%', DEFAULT);
+    EXEC test.assert_error
+        N'Invalid customer validation', 50001, N'%invalid customer%', DEFAULT;
 END CATCH;
 ```
 
-`test.fail_no_error()` always raises the missing-error sentinel; place it directly
+`EXEC test.fail_no_error` raises native assertion error 70001 with the missing-error
+sentinel; place it directly
 after the call expected to fail. It replaces the former `test.error()` name.
 Rerunning `install.sql` updates bundled tests and retires the legacy function and
 coverage-test name. Update calls and helper-target procedure names in your own
@@ -593,17 +909,19 @@ tests; no compatibility alias remains.
 
 | Helper                                           | Purpose                                                        | Example                                                               |
 | ------------------------------------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `test.assert_equals(msg, expected, actual)`      | smart equality check (numbers, JSON, etc.)                     | `test.assert_equals('Should be 42', '42', @val)`                      |
-| `test.assert_float_equals(msg, expected, actual, tolerance)` | FLOAT equality within an inclusive absolute tolerance | `test.assert_float_equals('Deviation', @expected, @actual, 1E-12)` |
+| `test.assert_equals @message, @expected, @actual` | smart equality through is_equal | `EXEC test.assert_equals N'Should be 42', N'42', @val;` |
+| `test.assert_float_equals @message, @expected, @actual, @tolerance` | FLOAT equality through is_float_equal | `EXEC test.assert_float_equals N'Deviation', @expected, @actual, 1E-12;` |
 | `test.assert_resultset_equals @message, @expected_query, @actual_query` | Compare two SELECT results; stored procedure | `EXEC test.assert_resultset_equals N'Rows', N'SELECT 1 AS id', N'SELECT 1 AS id';` |
-| `test.assert_error(msg, expected_number, expected_message_pattern, expected_state)` | Match a caught error; NULL/DEFAULT skip individual filters | `test.assert_error(N'Expected message', DEFAULT, N'%Invalid customer%', DEFAULT)` |
-| `test.assert_not_null(msg, value)`               | value **must** be NOT NULL                                     |                                                                       |
-| `test.assert_null(msg, value)`                   | value **must** be NULL                                         |                                                                       |
+| `test.assert_query_schemas_equal @message, @expected_query, @actual_query` | Compare ordered output column names and types | `EXEC test.assert_query_schemas_equal N'Schema', N'SELECT 1 AS id', N'SELECT 99 AS id';` |
+| `test.assert_schema_signature @message, @expected_schema_signature, @actual_query` | Compare query schema with a canonical signature | `EXEC test.assert_schema_signature N'Schema', N'[id] int', N'SELECT 1 AS id';` |
+| `test.assert_error @message, @expected_number, @expected_message_pattern, @expected_state` | Match a caught error; omitted/NULL filters are skipped | `EXEC test.assert_error N'Expected message', @expected_message_pattern = N'%Invalid customer%';` |
+| `test.assert_not_null @message, @value` | Require is_not_null = 1 | `EXEC test.assert_not_null N'Required', @value;` |
+| `test.assert_null @message, @value` | Require is_null = 1 | `EXEC test.assert_null N'Expected NULL', @value;` |
 | `test.fail(msg)`                                 | fail immediately, you can add your conditions in WHERE section | SELECT `test.fail('Not implemented')` WHERE IsAdmin(@my\_profile) = 0 |
-| `test.fail_no_error()` | Fail when an expected exception did not occur; place after the tested call | `SET @result = test.fail_no_error();` |
+| `test.fail_no_error` | Fail when an expected exception did not occur; place after the tested call | `EXEC test.fail_no_error;` |
 |                                                  |                                                                |                                                                       |
 
-`assert_float_equals` returns `N''` on success and raises an assertion failure on
+`assert_float_equals` returns normally on success and raises an assertion failure on
 mismatch. `@tolerance` is the maximum absolute difference, not a decimal
 digit count or relative percentage; it must be non-NULL and non-negative. Zero
 requires exact equality. Two NULL values match; one NULL fails. STDEV tests pass
@@ -618,19 +936,16 @@ matching uses SQL `LIKE` through `@expected_message_pattern`; pass `N'%fragment%
 to find text within the message.
 Use `[%]`, `[_]` and `[[]` to match literal wildcard characters.
 All-NULL filters still require a genuine caught error. Outside CATCH and for the
-`test.fail_no_error()` no-error sentinel, the assertion fails. Success returns NULL.
-Scalar-function calls still supply all argument positions; use `DEFAULT` for
-omitted filters.
+`test.fail_no_error` no-error sentinel, the assertion fails. Optional filters can
+be omitted or supplied by name.
 
 ```sql
-DECLARE @result nvarchar(max), @error_result int;
 BEGIN TRY
-    SET @result = test.assert_float_equals(N'Different values', 1, 2, 1E-12);
-    SET @result = test.fail_no_error();
+    EXEC test.assert_float_equals N'Different values', 1, 2, 1E-12;
+    EXEC test.fail_no_error;
 END TRY
 BEGIN CATCH
-    SET @error_result = test.assert_error(
-        N'Different floats must fail', 245, DEFAULT, DEFAULT);
+    EXEC test.assert_error N'Different floats must fail', 70001;
 END CATCH;
 ```
 
@@ -642,25 +957,28 @@ END CATCH;
 EXEC test.run
       @test_names        = N'[tests].[sales.usp_create_order@happy_path]|[tests].[inventory.adjust_stock@edge_case]',
       @exclude_test_names = N'[tests].[sales.usp_create_order@obsolete]',
-      @schemas            = N'sales,inventory',
-      @exclude_schemas    = N'legacy',
-      @limit_failed       = 5,              -- stop after 5 failures
-      @before_callback    = N'SET NOCOUNT ON',
+      @test_schemas       = N'tests',
+      @test_object_schemas = N'sales,inventory',
+      @exclude_test_object_schemas = N'legacy',
+      @max_failures       = 5,              -- stop after 5 failures
+      @before_each_sql    = N'SET NOCOUNT ON',
       @log_proc_name      = N'test.log';
 ```
 
 | Parameter                       | Default      | Description                                                         |
 | ------------------------------- | ------------ | ------------------------------------------------------------------- |
-| `@test_names`                   | `NULL`       | Pipe‑separated list of fully‑qualified test procedures to *include* |
-| `@exclude_test_names`           | `NULL`       | Pipe‑separated list to *exclude*                                    |
-| `@schemas` / `@exclude_schemas` | `NULL`       | Filter by *tested object* schema (not test schema)                  |
-| `@limit_failed`                 | `1 000 000`  | Fail‑fast after N failures                                          |
-| `@before_callback`              | `NULL`       | T‑SQL executed before each test (e.g. `DBCC DROPCLEANBUFFERS`)      |
+| `@test_names`                   | `NULL`       | Pipe-separated exact names or SQL LIKE patterns to include |
+| `@exclude_test_names`           | `NULL`       | Pipe-separated exact names or SQL LIKE patterns to exclude |
+| `@test_schemas` / `@exclude_test_schemas` | `NULL`       | Filter by test-procedure container schema |
+| `@test_object_schemas` / `@exclude_test_object_schemas` | `NULL` | Filter by parsed tested-object schema |
+| `@max_failures`                 | `1 000 000`  | Fail‑fast after N failures                                          |
+| `@before_each_sql`              | `NULL`       | T‑SQL executed before each test (e.g. `DBCC DROPCLEANBUFFERS`)      |
 | `@log_proc_name`                | `'test.log'` | Plug‑in alternative logger                                          |
 
-Name lists contain exact procedure names; `*` and other wildcard patterns are
-not supported. Use `@schemas` and `@exclude_schemas` to filter by the tested
-object's schema instead.
+Exact names take precedence; otherwise names support SQL LIKE `%`, `_` and bracket
+character classes, not `*`. `[select_star].%` treats the quoted schema literally.
+Schema and name filters intersect. An unmatched included name/pattern or empty explicit
+schema fails instead of producing a false-green run. Exclusions matching nothing are ignored.
 
 ---
 
@@ -678,14 +996,15 @@ Feel free to swap it with your own implementation and point `test.run` to it.
 
 ## 🤖 CI integration
 
-Add a job after your migration step:
+Add a job after your migration step. This is a pipeline example, not an included
+workflow; configure connection/authentication for your test database:
 
 ```yaml
 - task: SqlAzureDacpacDeployment@1
   inputs:
     sqlFile: migrations.sql
     # …
-- script: sqlcmd -b -S $(DbServer) -d $(Db) -i sql/run_tests.sql
+- script: sqlcmd -b -S $(DbServer) -d $(Db) -Q "EXEC test.run;"
   displayName: "Run T‑SQL unit tests"
 ```
 
@@ -697,12 +1016,12 @@ Add a job after your migration step:
 
 | Area                                       | T-TEST                                                                                                                                                                                                                             | tSQLt                                                                                                                                                               | Take‑away                                                                                     |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Installation size**                      | single script, < 10 KB of objects in `test` & `tests` schemas                                                                                                                                                                      | \~700 KB, dozens of objects spread across multiple helper schemas (`tSQLt`, `tSQLtPrivate`, etc.)                                                                   | T-TEST is tiny & vendor‑free; tSQLt is feature‑rich but heavy                                 |
-| **How recordsets are compared**            | `test.assert_equals` does *smart* binary/JSON/decimal equality – often one line                                                                                                                                                    | `tSQLt.AssertEqualsTable` requires creating an *expected* table variables                                                                                           | T-TEST is terser; tSQLt is explicit but verbose                                               |
-| **Service Broker & SQL Agent job testing** | Works seamlessly: each test opens its own `BEGIN TRAN` so dialogs, job runs, messages happen inside the same transaction and are rolled back                                                                                       | Standard pattern uses `EXEC tSQLt.NewTestClass` which wraps an *outer* transaction; Service Broker & job threads run **outside** it, often making assertions tricky | T-TEST 🟢; tSQLt requires extra harness or disabling transactions                             |
+| **Deployment** | One authoritative SQL installer; optional test packages are separate. No database-project build or DACPAC deployment. | A separate framework installation with additional testing helpers. | Compare the actual deployed versions; no fixed size claim is made. |
+| **How recordsets are compared** | `assert_resultset_equals` compares ordered SELECT data through shallow JSON; schema assertions check column contracts separately. | `tSQLt.AssertEqualsTable` compares named expected and actual tables. | Choose result-data and schema checks according to the contract being tested. |
+| **Service Broker & SQL Agent** | Tests can manage their own commit boundaries and cleanup; jobs run in another session and message delivery/activation can require commit. | Transaction-oriented tests also need special handling for asynchronous or commit-driven behavior. | Neither framework automatically rolls back cross-session or external effects. |
 | **Test classification**                    | Test procedure name encodes target: `[tests].[schema.object@scenario]` ⇒ quick filtering by schema/object                                                                                                                          | Uses *test classes* (schemas) + procedure name – extra level, but cleaner separation                                                                                | Depends on taste; tSQLt needs no helper commands to create classes                            |
 | **Execution flexibility**                  | `test.run` accepts *include / exclude* lists, schema filters, fail‑fast limit, callback hook                                                                                                                                       | `EXEC tSQLt.Run` runs all or a single class; finer filtering requires PowerShell or wrapper scripts                                                                 | T-TEST offers more granular selection out‑of‑the‑box                                          |
-| **Helpers & exception handling** | Helpers are **functions**, usable inline with expressions or scalar subqueries. `test.fail_no_error` guards missing exceptions; `test.assert_error` checks number, LIKE message and state. | Helpers are *procedures*. Need temp tables / variables for passing data; exception tests rely on `tSQLt.ExpectException` with hard-coded numbers. | Functions inline reduce boilerplate. tSQLt procedures support output capture but add ceremony. |
+| **Helpers & exception handling** | Assertions are **procedures** backed by reusable bit predicates. `assert_error` checks number, LIKE message and state inside CATCH. | Helpers are *procedures*; exception tests use `tSQLt.ExpectException`. | T-TEST keeps comparisons reusable without assertions and error checks explicit. |
 | **Mocking / Isolation**                    | Uses your own `BEGIN TRAN / ROLLBACK`; no automatic fake tables                                                                                                                                                                    | Rich mocking: fake tables, spy procedures, `tSQLt.FakeTable`, `tSQLt.SpyProcedure`                                                                                  | tSQLt wins for complex mocks                                                                  |
 | **Dependencies**                           | None (pure T‑SQL)                                                                                                                                                                                                                  | CLR enabled (for NUnit‑style output) on older versions, external installer                                                                                          | T-TEST easier on locked‑down servers                                                          |
 
@@ -710,7 +1029,8 @@ Add a job after your migration step:
 
 * You want a *minimal* framework that piggybacks on plain T‑SQL and works in any environment (Azure SQL DB, managed instances, on‑prem).
 * Your primary pain‑point is **assertion verbosity** rather than advanced mocking.
-* You need to test **Service Broker conversations or SQL Agent jobs** inside the same transaction.
+* You need explicit control over transaction boundaries for **Service Broker or SQL
+  Agent tests**, with disposable fixtures and separate cleanup for external effects.
 
 **When to stick to tSQLt**
 
@@ -721,7 +1041,7 @@ Add a job after your migration step:
 
 ## 📄 License
 
-[MIT](LICENSE)
+[MIT](LICENSE.txt)
 
 ---
 
