@@ -617,10 +617,12 @@ because session scope for vectors and dimensions is unavailable.
 Appends one complete, trusted SQL argument list. SQL handles argument binding,
 defaults and conversions; the framework does not split or rewrite the text.
 
+**Syntax**
+
 ```sql
 EXEC test.vector
-    @test_name = N'[tests].[test.assert_equals@vector_example]', -- nvarchar(max), required
-    @arguments_sql = N'1, 1';                                   -- nvarchar(max), required
+    @test_name = ...,     -- nvarchar(max), required
+    @arguments_sql = ...; -- nvarchar(max), required
 ```
 
 Use schema-qualified names of discovered tests in the current database; database/server
@@ -629,6 +631,42 @@ NULL or whitespace-only argument text is rejected. SQL literal text `NULL` and
 `N''` are valid arguments. Use Unicode literals inside the argument list when needed.
 The text is test code, not safe input from untrusted callers.
 The SQL text and resolved test name must round-trip through UTF-8; invalid Unicode is rejected.
+
+**Example: create and run a repeatable vector test**
+
+Run the complete block after `install.sql` in a dedicated test database. It creates
+the procedure before registering arguments, then clears only its own cases. Repeating
+the block executes two cases without adding duplicates or clearing shipped POWER vectors.
+
+```sql
+CREATE OR ALTER PROC [tests].[test.assert_equals@vector_example]
+    @expected nvarchar(max), @actual nvarchar(max)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @equal bit;
+
+    -- Arrange
+    --N/A
+
+    -- Act
+    SET @equal = test.is_equal(@expected, @actual);
+
+    -- Assert
+    EXEC test.assert_equals N'Vector predicate must report equality', 1, @equal;
+END;
+GO
+
+EXEC test.set_registration_scope @scope = N'global';
+EXEC test.clear_registrations @test_name = N'[tests].[test.assert_equals@vector_example]';
+EXEC test.vector
+    @test_name = N'[tests].[test.assert_equals@vector_example]',
+    @arguments_sql = N'1, 1';
+EXEC test.vector
+    @test_name = N'[tests].[test.assert_equals@vector_example]',
+    @arguments_sql = N'NULL, NULL';
+EXEC test.run @test_names = N'[tests].[test.assert_equals@vector_example]';
+```
 
 Installation creates the global table if absent, using the same ordinary DDL on both
 platforms. Existing compatible tables and their saved rows are retained:
@@ -711,9 +749,10 @@ EXEC test.clear_registrations;
 ```
 
 Pass the optional `@test_name nvarchar(max)` to clear both sources for only one test:
+this example uses the procedure created in the [vector example](#testvector).
 
 ```sql
-EXEC test.clear_registrations @test_name = N'[tests].[WELCH_TEST@generate_series]';
+EXEC test.clear_registrations @test_name = N'[tests].[test.assert_equals@vector_example]';
 ```
 
 The name must resolve to a schema-qualified discovered test in this database, as for

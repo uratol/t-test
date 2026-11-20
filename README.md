@@ -130,9 +130,9 @@ SQL inside CATCH, keeping the unsupported function out of Fabric's static code.
 
 See [Behavior changes](CHANGES.md#shared-installer-for-sql-server-and-fabric) for
 permission, transaction and validation limitations.
-The previous installer and extended suite passed in a user-reported Fabric Warehouse
-run. The latest review fixes still require execution there.
-Rerun the complete `install.sql`, then the complete coverage file below.
+The current installer and 49-group framework suite passed in a user-reported Fabric
+Warehouse run after the scope-test compilation fix. This confirms that reported run,
+not every optional package or every Warehouse execution context.
 Current native release checks run on SQL Server, not Fabric. In particular,
 the scalar `FOR JSON` data-capture paths have a documented Warehouse restriction;
 see [Comparing two SELECT statements](#comparing-two-select-statements).
@@ -629,6 +629,8 @@ their saved vectors or dimensions.
 
 **Global storage is the default.** Installation provisions the table; register trusted
 SQL argument lists and keep using the existing `test.run` interface.
+This example creates its test and clears only that test's registrations before adding
+two vectors, so repeating the complete block still runs exactly two cases.
 
 ```sql
 CREATE OR ALTER PROC [tests].[test.assert_equals@vector_example]
@@ -649,8 +651,14 @@ BEGIN
 END;
 GO
 
-EXEC test.vector N'[tests].[test.assert_equals@vector_example]', N'1, 1';
-EXEC test.vector N'[tests].[test.assert_equals@vector_example]', N'NULL, NULL';
+EXEC test.set_registration_scope @scope = N'global';
+EXEC test.clear_registrations @test_name = N'[tests].[test.assert_equals@vector_example]';
+EXEC test.vector
+    @test_name = N'[tests].[test.assert_equals@vector_example]',
+    @arguments_sql = N'1, 1';
+EXEC test.vector
+    @test_name = N'[tests].[test.assert_equals@vector_example]',
+    @arguments_sql = N'NULL, NULL';
 EXEC test.run @test_names = N'[tests].[test.assert_equals@vector_example]';
 ```
 
@@ -665,7 +673,7 @@ Fabric Warehouse supports global scope only; `test.set_registration_scope N'sess
 scope. Global reset affects every user sharing those definitions. Missing tables warn
 and skip registration; the runner/reset silently continue without that source.
 Reset also removes the shipped POWER vectors; rerun `install.sql` to restore them.
-Use `EXEC test.clear_registrations @test_name = N'[tests].[WELCH_TEST@generate_series]';`
+Use `EXEC test.clear_registrations @test_name = N'[tests].[test.assert_equals@vector_example]';`
 to clear only one procedure's vectors and dimensions in that store.
 See [vector APIs](docs/api.md#testvector) for storage, logging and trust-boundary details.
 

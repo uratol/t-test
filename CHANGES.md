@@ -7,9 +7,12 @@ discovery views and
 seventeen basic test procedures. Basic verification expects 25 cases with default
 registrations: fifteen static calls, four POWER vectors and six REPLICATE combinations.
 Saved global registrations can change the executed count.
-The previous installer and extended suite passed in a user-reported Fabric Warehouse
-run (43 groups, zero failures, five inherited bugs). The corrections below pass
-locally but still require rerunning the updated installer and suite on Fabric.
+The current installer and 49-group framework suite passed in a user-reported Fabric
+Warehouse run after the scope-test compilation fix. The full local SQL Server release
+check also passed, including all five mutation controls. This is not comprehensive
+Fabric validation of every optional package or an instrumented coverage percentage.
+An earlier user-reported Fabric run covered 43 groups, zero failures and five inherited
+bugs; that historical result predates the current fixes.
 
 ## API naming cleanup
 
@@ -278,7 +281,8 @@ vectors and temporarily replaces REPLICATE domains with six combinations, restor
 saved domains afterward. It drops the dimension table only if verification created it.
 Test procedures do not register their own cases. The standalone `vector-tests.sql`
 and `dimension-tests.sql` exercise 37 and 29 scenarios with disposable fixtures.
-The latest changes still require execution on Fabric.
+These mixed session/global diagnostic suites run only on SQL Server. The shared
+installer and framework suite also passed the user-reported Fabric run using global scope.
 
 ## Basic verification and modular test packages
 
@@ -375,8 +379,8 @@ catalog self-test also removes its fixtures after unexpected validator errors.
 
 Filter scenarios verify executed identities and multiplicities, not just counts.
 NULL-pattern rejection checks both the error number and diagnostic, so unrelated
-conversion errors cannot pass. These changes pass local SQL Server checks; the
-updated scripts still require a Fabric Warehouse run.
+conversion errors cannot pass. These changes pass local SQL Server checks, and the
+updated shared framework suite also passed a user-reported Fabric Warehouse run.
 
 ## Current JSON comparison: ordered result sets
 
@@ -629,7 +633,8 @@ Historical local runs under binary and case-insensitive
 UTF-8 collations return `PASSED`, 43 groups, zero failures and zero known bugs.
 The initial native SQL Server checks also passed the four original bundled tests;
 the local harness checks numeric error lines instead of Fabric's required `N/A`.
-Those results do not verify the latest ordered/raw implementation on Fabric.
+Those historical results alone do not verify the latest ordered/raw implementation
+on Fabric; the current 49-group suite has since passed a user-reported Warehouse run.
 For current verification, rerun the complete `install.sql`, then
 `install-framework-coverage-tests.sql`, followed by the entire
 `run-framework-coverage-tests.sql` in one session.
