@@ -1,14 +1,20 @@
 -- SQL Server 2022+ / Fabric Warehouse.
--- Removes the 70 shipped test procedures, framework objects and legacy API names.
+-- Removes the 72 shipped test procedures, framework objects and legacy API names.
 -- Preserves schemas, unrelated user objects, tables and data.
 -- Custom tests that depend on the framework will need it reinstalled.
 -- Run the entire file outside a transaction. Cleanup is not atomic.
 SET NOCOUNT ON;
 IF @@TRANCOUNT > 0
-	THROW 51090, 'Run uninstall.sql outside a transaction.', 1;
+BEGIN
+	IF CAST(SERVERPROPERTY('EngineEdition') AS int) = 11
+		RAISERROR(N'Run uninstall.sql outside a transaction.', 16, 1);
+	ELSE
+		EXEC sys.sp_executesql N'SET XACT_ABORT OFF; RAISERROR(N''Run uninstall.sql outside a transaction.'', 16, 1);';
+	RETURN;
+END;
 
 BEGIN TRY
-	-- Basic verification (15).
+	-- Basic verification (17).
 	DROP PROCEDURE IF EXISTS [tests].[test.test];
 	DROP PROCEDURE IF EXISTS [tests].[test.test@name_convention];
 	DROP PROCEDURE IF EXISTS [tests].[test.format_message];
@@ -16,6 +22,8 @@ BEGIN TRY
 	DROP PROCEDURE IF EXISTS [tests].[test.assert_equals];
 	DROP PROCEDURE IF EXISTS [tests].[test.assert_float_equals];
 	DROP PROCEDURE IF EXISTS [tests].[test.assert_resultset_equals];
+	DROP PROCEDURE IF EXISTS [tests].[test.assert_query_schemas_equal];
+	DROP PROCEDURE IF EXISTS [tests].[test.assert_schema_equals];
 	DROP PROCEDURE IF EXISTS [tests].[test.assert_query_equals];
 	DROP PROCEDURE IF EXISTS [tests].[test.assert_error];
 	DROP PROCEDURE IF EXISTS [tests].[test.assert_not_null];
@@ -25,6 +33,7 @@ BEGIN TRY
 	DROP PROCEDURE IF EXISTS [tests].[stdev@basic];
 	DROP PROCEDURE IF EXISTS [tests].[data_types@basic];
 	DROP PROCEDURE IF EXISTS [tests].[power@vectors];
+	DROP PROCEDURE IF EXISTS [tests].[replicate@dimensions];
 
 	-- Additional framework coverage (16).
 	DROP PROCEDURE IF EXISTS [tests].[test.is_equal@fc_values];
@@ -45,6 +54,7 @@ BEGIN TRY
 	DROP PROCEDURE IF EXISTS [tests].[test.log@fc_logging];
 	DROP PROCEDURE IF EXISTS [tests].[test.throw@fc_throwing];
 	DROP PROCEDURE IF EXISTS [tests].[test.test@fc_catalog];
+	DROP PROCEDURE IF EXISTS [tests].[test.set_registration_scope@fc_context];
 	DROP PROCEDURE IF EXISTS [tests].[test.set_scope@fc_context];
 	DROP PROCEDURE IF EXISTS [tests].[test.vector@fc_literals];
 
@@ -92,15 +102,37 @@ BEGIN TRY
 	DROP PROCEDURE IF EXISTS [tests].[stdev@value_100000];
 
 	DROP PROCEDURE IF EXISTS [test].[run];
+	DROP PROCEDURE IF EXISTS [test].[clear_registrations];
 	DROP PROCEDURE IF EXISTS [test].[reset];
 	DROP PROCEDURE IF EXISTS [test].[vector];
+	DROP PROCEDURE IF EXISTS [test].[dimension];
+	DROP PROCEDURE IF EXISTS [test].[set_registration_scope];
 	DROP PROCEDURE IF EXISTS [test].[set_scope];
 	DROP PROCEDURE IF EXISTS [test].[assert_resultset_equals];
+	DROP PROCEDURE IF EXISTS [test].[assert_query_schemas_equal];
+	DROP PROCEDURE IF EXISTS [test].[assert_schema_signature];
+	DROP PROCEDURE IF EXISTS [test].[assert_schema_equals];
+	DROP PROCEDURE IF EXISTS [test].[assert_schema];
+	DROP PROCEDURE IF EXISTS [test].[get_query_schema];
 	DROP PROCEDURE IF EXISTS [test].[assert_query_equals];
+	IF OBJECT_ID(N'[test].[assert_equals]', N'P') IS NOT NULL
+		DROP PROCEDURE [test].[assert_equals];
+	IF OBJECT_ID(N'[test].[assert_float_equals]', N'P') IS NOT NULL
+		DROP PROCEDURE [test].[assert_float_equals];
+	IF OBJECT_ID(N'[test].[assert_null]', N'P') IS NOT NULL
+		DROP PROCEDURE [test].[assert_null];
+	IF OBJECT_ID(N'[test].[assert_not_null]', N'P') IS NOT NULL
+		DROP PROCEDURE [test].[assert_not_null];
+	IF OBJECT_ID(N'[test].[assert_error]', N'P') IS NOT NULL
+		DROP PROCEDURE [test].[assert_error];
+	IF OBJECT_ID(N'[test].[fail_no_error]', N'P') IS NOT NULL
+		DROP PROCEDURE [test].[fail_no_error];
 	DROP PROCEDURE IF EXISTS [test].[throw];
 	DROP PROCEDURE IF EXISTS [test].[log];
 	IF OBJECT_ID(N'[test].[test]', N'V') IS NOT NULL
 		DROP VIEW [test].[test];
+	IF OBJECT_ID(N'[test].[test_procedures]', N'V') IS NOT NULL
+		DROP VIEW [test].[test_procedures];
 
 	IF OBJECT_ID(N'[test].[assert_equals]', N'FN') IS NOT NULL
 		DROP FUNCTION [test].[assert_equals];
@@ -124,6 +156,16 @@ BEGIN TRY
 		DROP FUNCTION [test].[fail];
 	IF OBJECT_ID(N'[test].[is_equal]', N'FN') IS NOT NULL
 		DROP FUNCTION [test].[is_equal];
+	IF OBJECT_ID(N'[test].[is_equals]', N'FN') IS NOT NULL
+		DROP FUNCTION [test].[is_equals];
+	IF OBJECT_ID(N'[test].[is_float_equal]', N'FN') IS NOT NULL
+		DROP FUNCTION [test].[is_float_equal];
+	IF OBJECT_ID(N'[test].[is_float_equals]', N'FN') IS NOT NULL
+		DROP FUNCTION [test].[is_float_equals];
+	IF OBJECT_ID(N'[test].[is_null]', N'FN') IS NOT NULL
+		DROP FUNCTION [test].[is_null];
+	IF OBJECT_ID(N'[test].[is_not_null]', N'FN') IS NOT NULL
+		DROP FUNCTION [test].[is_not_null];
 	IF OBJECT_ID(N'[test].[is_json_equal]', N'FN') IS NOT NULL
 		DROP FUNCTION [test].[is_json_equal];
 	IF OBJECT_ID(N'[test].[is_equal_openjson]', N'FN') IS NOT NULL

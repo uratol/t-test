@@ -1,16 +1,26 @@
 # Research: static and parameterized tests
 
-**Status:** vectors are implemented; dimensions remain a later-phase design.
+**Status:** vectors and dimensions are implemented. SQL Server execution is
+verified; Fabric Warehouse runtime verification is still required. The design
+below retains its original implementation-plan wording.
+**Current source:** `install.sql` contains the framework and basic test definitions;
+there is no separate database project. Historical delivery plans below do not
+override the current [API reference](docs/api.md) or [installation contract](README.md).
+
 Installation provisions permanent vector storage. Users create session tables and
-choose scope via one optional `test.set_scope` call. It sets
+choose scope via one optional `test.set_registration_scope` call. It sets
 `ttest:vectors:scope` in the current connection's session
 context: **`N'global'` is the default**, using permanent storage. Select
 `N'session'` explicitly for connection-local temporary registration tables.
-`test.vector`, `test.dimension`, `test.run` and `test.reset` read that setting;
+`test.vector`, `test.dimension`, `test.run` and `test.clear_registrations` read that setting;
 none gains a scope parameter. Session scope uses `#`; global scope uses none.
 Vectors are complete SQL argument lists; dimensions are scalar JSON arrays parsed
 once into SQL literals. Existing unregistered tests keep their behavior.
 SQL Server 2022+ and Fabric Warehouse execution must both be verified.
+
+On SQL Server, installation, registration, reset and test runs require `ROWCOUNT 0`.
+If changed, issue `SET ROWCOUNT 0` directly in the calling batch beforehand.
+Do not issue `SET ROWCOUNT` on Fabric Warehouse; it is unsupported.
 
 ## 1. Core model
 
@@ -55,12 +65,11 @@ BEGIN
     SET NOCOUNT ON;
     DECLARE @expected int = @number * LEN(@text);
     DECLARE @actual int = LEN(REPLICATE(@text, @number));
-    DECLARE @result nvarchar(max);
-    SET @result = test.assert_equals(N'Repeated text length', @expected, @actual);
+    EXEC test.assert_equals N'Repeated text length', @expected, @actual;
 END;
 GO
 
-EXEC test.set_scope N'session';
+EXEC test.set_registration_scope N'session';
 
 CREATE TABLE #test_vectors (
     procedure_name varchar(2048) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL,
@@ -86,11 +95,11 @@ EXEC test.dimension '[tests].[replicate@cases]', '@text', '["a","bb","ccc"]';
 EXEC test.run @test_names = N'[tests].[replicate@cases]';
 -- Eight invocations: the same two vectors, then six combinations.
 
-EXEC test.reset;
+EXEC test.clear_registrations;
 DROP PROCEDURE [tests].[replicate@cases];
 ```
 
-`test.reset` clears registrations, not procedures. A retained parameterized
+`test.clear_registrations` clears registrations, not procedures. A retained parameterized
 procedure with required arguments must be registered again before an unfiltered
 run; otherwise its argumentless invocation reports a normal SQL execution error.
 Creating only the table for the source you use is sufficient. Keep both tables
@@ -214,13 +223,13 @@ Use `sp_executesql` for registered invocations; keep the existing
 
 ### One switch, two storage choices
 
-| `test.set_scope @scope` | Vector table | Dimension table | Lifetime and visibility |
+| `test.set_registration_scope @scope` | Vector table | Dimension table | Lifetime and visibility |
 | --- | --- | --- | --- |
 | `N'session'` | `#test_vectors` | `#test_dimension_values` | Current connection only; automatically dropped when it closes. |
 | `N'global'` (default) | `[test].[test_vectors]` | `[test].[test_dimension_values]` | Permanent, shared definitions in the current database; survive connection closure. |
 
 **Global storage requires no scope call:** an unset context uses the permanent tables.
-For session storage, call `EXEC test.set_scope N'session';` once on that connection.
+For session storage, call `EXEC test.set_registration_scope N'session';` once on that connection.
 The selected scope persists until changed and is independent of registration rows.
 There is no automatic fallback, merge or copy between stores. On an unset
 connection, `EXEC test.run;` reads global registrations only.
@@ -260,7 +269,7 @@ CREATE TABLE [test].[test_dimension_values] (
 With the example test procedure installed, register permanent cases once:
 
 ```sql
-EXEC test.set_scope N'global';
+EXEC test.set_registration_scope N'global';
 
 EXEC test.vector
     N'[tests].[replicate@cases]', N'1,N''a''';
@@ -275,14 +284,14 @@ them again. The test procedure must remain installed; the quick start removes
 its demo procedure, so recreate it before using this separate example.
 
 ```sql
-EXEC test.set_scope N'global';
+EXEC test.set_registration_scope N'global';
 EXEC test.run @test_names = N'[tests].[replicate@cases]';
 ```
 
-`EXEC test.reset;` clears only the currently selected store. In global scope it
+`EXEC test.clear_registrations;` clears only the currently selected store. In global scope it
 deletes permanent registrations shared by all users. This is an explicit maintenance
 operation, not a required step before running saved configurations.
-To return to ad hoc registrations, call `EXEC test.set_scope N'session';`.
+To return to ad hoc registrations, call `EXEC test.set_registration_scope N'session';`.
 
 ### Caller setup and actionable errors
 
@@ -345,7 +354,10 @@ preserving static logger behavior. Missing registration data is not a failed tes
 case; the final summary describes only the cases actually available to that run,
 not the user's intended configuration.
 
-### Public signatures
+### Public signatures (original design)
+
+The signatures below record the original design, not the current API. For current
+parameter names and order, see [test.run](docs/api.md#testrun).
 
 ```sql
 test.set_scope
@@ -373,8 +385,10 @@ test.run
 ```
 
 These are signatures, not executable declarations. Setter and registration inputs
-are required. The seven-argument `test.run` signature remains exactly unchanged,
-and reset has no arguments. MAX inputs permit validation before truncation.
+are required. In that original design, `test.run` had seven arguments and reset had
+none. The current API adds selectors, renames controls and supports per-test cleanup;
+use the linked API reference rather than this historical snapshot. MAX inputs permit
+validation before truncation.
 Dimension names include `@`. All storage APIs read scope once at entry; the runner
 captures it before snapshotting. A callback changing session scope affects later
 API calls, never the active run's selected tables or frozen cases.
@@ -487,13 +501,13 @@ quote their actual contents once for SQL, not their original JSON escape spellin
 | Call or condition | Required behavior |
 | --- | --- |
 | Caller setup | Installation provisions the permanent vector table if absent. Create temp tables in the calling batch; future permanent dimension tables remain caller-provisioned. |
-| `test.set_scope` | Store session/global in the current connection's context; change no table or registration rows. |
+| `test.set_registration_scope` | Store session/global in the current connection's context; change no table or registration rows. |
 | Registration without its table | Print a warning with suggested DDL, skip that call and continue without rows. |
 | `test.vector` | Append one positional case to the named procedure, preserving its dimensions. |
 | `test.dimension` | Register a new domain; reject a second registration of the same procedure/parameter without changing existing rows. |
 | Registering another procedure | Preserve all registrations for other procedures. |
 | `test.run` | Snapshot only the selected store; execute explicit cases first, then dimension combinations, without consuming configuration. |
-| `test.reset` | Delete all rows from whichever registration tables exist in the selected store; keep definitions and leave the other store untouched. |
+| `test.clear_registrations` | Delete all rows from whichever registration tables exist in the selected store; keep definitions and leave the other store untouched. |
 | Connection closes | Session tables and scope selection disappear; permanent tables and their rows remain. A fresh connection defaults to global. |
 | Neither source registered for a selected test | Invoke it once without arguments, preserving current behavior. |
 
@@ -679,7 +693,7 @@ No fixed cap does not mean bounded cost: five domains of twenty values already
 produce 3,200,000 cases. Materialization can exhaust resources before any case of
 that procedure runs. Keep one procedure's queue at a time; paging and streaming
 are outside this minimal design. Infrastructure errors abort the run, not mark
-unattempted cases as failed. `@limit_failed` counts observed failures across both
+unattempted cases as failed. `@max_failures` counts observed failures across both
 phases; it is not a generation, memory or runtime limit.
 
 ## 7. Required changes to the current runner
@@ -748,7 +762,7 @@ Framework/logger failures also abort; no matching completion is promised after
 such an abort or connection interruption. Keep new logging outside the invocation
 TRY/CATCH so a logger error cannot become a test failure or duplicate result.
 For a caught registered-case failure, record and complete that case before honoring
-`@limit_failed`; stopping must not omit its completion or start another case.
+`@max_failures`; stopping must not omit its completion or start another case.
 
 Store exact call text as MAX-length text with the result. Pass it through the
 existing logger's `@data`, which prints long data in chunks, not through
@@ -809,13 +823,13 @@ Cartesian-product dimensions, sharing one case lifecycle. Range and sequential
 generation are outside the initial scope; neither adds API parameters or
 implementation requirements.
 
-Implement four small procedures: set_scope, vector, dimension and reset. Extend
+Implement four small procedures: set_registration_scope, vector, dimension and reset. Extend
 the runner's scheduling, invocation and result handling without changing its
 signature. Read scope from session context once per API call and resolve it to
 known table names; do not introduce a storage-provider layer.
 Keep one invocation lifecycle, the existing assertions, discovery view and logger.
-Add the four procedure files
-to SSDT and the shared installer; update uninstall and the API documentation.
+Add the four procedure definitions to `install.sql`; update uninstall and the API
+documentation.
 Do not convert shipped tests or add parameterized examples to installation's basic
 selection. Preserve the fourteen static checks and add POWER as the fifteenth
 built-in procedure, using four vectors for eighteen installation cases in total.
@@ -837,7 +851,7 @@ Strict acceptance gates:
 | Registration behavior | Missing tables warn and skip registration; runner/reset continue without that source and never fall back to the other store. Invalid scopes, NULL/blank vectors, invalid JSON roots, empty arrays and repeated domains remain errors. Names respect database case sensitivity. No permission-diagnosis or custom element-type rejection is required. |
 | Text fidelity | Round-trip Unicode, apostrophes, commas, quotes, backslashes, control characters, empty strings and values over 4,000 characters. Distinguish null from `"NULL"` and keep `"GETDATE()"` as text. Preserve numeric spelling/exponents and explicit binary literals. Check UTF-8 byte limits after escaping. |
 | Lifetime and isolation | Temp registrations isolate connections and disappear on close. Permanent registrations survive connection closure and are readable from a second connection without re-registration. Reset affects only the selected store; permanent reset is shared. Private snapshots survive later registry changes and remain isolated between runs. |
-| Storage ownership | Only test.set_scope takes a scope parameter. The session key persists across calls in one connection; global selects permanent names, never ## tables. Setter changes no rows; reset leaves the key unchanged. Verify connection isolation, repeated switching, invalid state and callback scope changes without changing the active snapshot. Uninstall preserves permanent definitions. |
+| Storage ownership | Only test.set_registration_scope takes a scope parameter. The session key persists across calls in one connection; global selects permanent names, never ## tables. Setter changes no rows; reset leaves the key unchanged. Verify connection isolation, repeated switching, invalid state and callback scope changes without changing the active snapshot. Uninstall preserves permanent definitions. |
 | Execution and reporting | Missing required arguments, syntax/conversion errors, assertion failures and transaction cleanup are classified correctly. Check per-case callbacks, cross-phase failure limits, exact long calls through `@data`, distinct invocation events and no fake completion after logger failure. |
 | Work planning | Check BIGINT multiplication and addition at their boundaries without materializing huge products. Confirm one procedure queue at a time and no hidden fixed cap. Infrastructure errors never create successful or failed results for unattempted cases. |
 
@@ -856,9 +870,9 @@ verification; SQL Server checks alone do not prove Fabric Warehouse support.
 This section defines implementation steps, not a second API. Examples are fragments
 for the future procedure bodies; they do not install the feature.
 
-### 1. test.set_scope: one session key
+### 1. test.set_registration_scope: one session key
 
-`test.set_scope @scope` accepts exactly `session` or `global`, without trimming or
+`test.set_registration_scope @scope` accepts exactly `session` or `global`, without trimming or
 silently truncating inputs. Validate before writing so an invalid call preserves
 the previous setting. Store a bounded Unicode value: `sp_set_session_context`
 accepts SQL_VARIANT, not NVARCHAR(MAX). Keep the key mutable to allow switching:
@@ -893,7 +907,7 @@ No new helper function or general configuration manager is required.
 
 The runner never reads the context again after entry. A callback can change it for
 later calls, but the active runner uses its captured names and private snapshots.
-`test.reset` does not restore session scope; switching back requires the setter.
+`test.clear_registrations` does not restore session scope; switching back requires the setter.
 Connection-local scope selection is not a database-wide option, even for global
 storage. Use sequential calls on one connection, not concurrent MARS setters.
 
@@ -940,7 +954,7 @@ no partial domain remains. Do not catch errors to substitute SQL NULL or add
 special boolean/object checks. No staging table is needed. Permanent writers are
 serialized by the provisioning workflow, not a new framework lock protocol.
 
-### 3. test.reset: delete data, retain selection and tables
+### 3. test.clear_registrations: delete data, retain selection and tables
 
 Capture scope once. For each table found by the probe, execute
 `DELETE FROM <resolved_name>`. A NULL probe is a no-op without permission
@@ -1033,7 +1047,7 @@ Drop only runner-owned work tables on return/handled abort without masking error
 
 ### 6. Delivery and focused verification
 
-Add four SSDT procedure files and shared-installer definitions; update uninstall
+Add four procedure definitions to `install.sql`; update uninstall
 to remove those four APIs but preserve user registration tables. Do not modify
 assertions or move existing basic tests to parameterized registration. Installation
 also provisions the global vector table if absent. Verification selects session scope,
@@ -1055,10 +1069,10 @@ No live-database verification is implied by these implementation fragments.
 ## Sources
 
 - Current invocation, results and callback lifecycle:
-  `Source (SSDT project)\test\Stored Procedures\run.sql`.
+  the `test.run` definition in [install.sql](install.sql).
 - Current discovery of every procedure in `tests`:
-  `Source (SSDT project)\test\Views\test.sql`.
-- [Current API reference](api.md).
+  the `test.test` view definition in [install.sql](install.sql).
+- [Current API reference](docs/api.md).
 - [NUnit combinatorial generation](https://docs.nunit.org/articles/nunit/writing-tests/attributes/combinatorial.html).
 - [Microsoft Learn: Fabric Warehouse temporary tables](https://learn.microsoft.com/en-us/fabric/data-warehouse/temp-tables).
 - [Microsoft Learn: SQL Server temporary table scope](https://learn.microsoft.com/en-us/sql/t-sql/statements/create-table-transact-sql?view=sql-server-ver17#temporary-tables).
