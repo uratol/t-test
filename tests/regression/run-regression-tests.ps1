@@ -81,6 +81,7 @@ CREATE DATABASE [$database];
         $null = Invoke-RegressionSql (Get-Content -Raw (Join-Path $repo $path))
     }
     Write-Output 'PASS: four optional installers (SELECT-star definitions only).'
+    & (Join-Path $PSScriptRoot 'select-star-package-tests.ps1') -Server $Server -Database $database
     $null = Invoke-RegressionSql (Get-Content -Raw (Join-Path $PSScriptRoot 'api-tests.sql')) `
         '(?s)Succeded: 3, failed: 0, errors: 0.*API_PASS:'
     Write-Output 'PASS: API signatures, named arguments and compatibility alias.'

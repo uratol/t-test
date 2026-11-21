@@ -7,6 +7,22 @@ discovery views and
 seventeen basic test procedures. Basic verification expects 25 cases with default
 registrations: fifteen static calls, four POWER vectors and six REPLICATE combinations.
 Saved global registrations can change the executed count.
+The SELECT-star sample now keeps all 50 contracts in 18 procedures: 30 schema vectors
+in `select_star.test`, four schema/data vectors in `select_star.test_data` and 16 static
+query-context tests. Both shared tests accept a label, expected columns and a star expression.
+The schema test uses `FROM sys.objects s`, including qualified/correlated inputs.
+The data test retains `WHERE object_id = OBJECT_ID('test.run')` and both assertions,
+including value changes that do not change types. The correlated subquery keeps its filter.
+The installer defines procedures only and retires the 34 replaced standalone procedures.
+The run script resets the two shared tests' global registrations, defines the 34 vectors,
+then calls `test.run`. Other objects and registrations
+are preserved; registrations targeting retired names are not silently deleted.
+The package is Fabric Warehouse-only. Its runner uses global storage
+without session-context branches. Native packaging regressions cover repeatable upgrades,
+schema match/mismatch behavior and global vector selection, not Fabric's SELECT-star syntax.
+Each vector is declared with `EXEC test.vector`, not a direct registry-table insert.
+`QUOTED_IDENTIFIER OFF` permits a double-quoted SQL argument list; apostrophes inside
+argument values are doubled. `QUOTED_IDENTIFIER ON` is restored after registration.
 The current installer and 49-group framework suite passed in a user-reported Fabric
 Warehouse run after the scope-test compilation fix. The full local SQL Server release
 check also passed, including all five mutation controls. This is not comprehensive
@@ -135,8 +151,10 @@ fail that expectation; use a dedicated test database. Temporary observers and de
 failing runner fixtures belong to execution, not installation.
 
 SELECT-star coverage uses 50 explicit-query oracles over existing system views,
-without input-table DDL, fixture inserts or transaction checks. All compare ordered
-schemas; four REPLACE cases additionally compare one stable catalog row. The four
+without input-table DDL, input fixtures or transaction checks inside the tests.
+30 schema cases are vectors; 16 query-context cases remain static.
+Four REPLACE vectors additionally compare one stable catalog row through `test_data`.
+The runner writes global vector registrations after a targeted reset. The four
 CTAS tests are removed, and reinstallation drops their retired procedures. Materialized
 table coverage is therefore no longer part of this package. Its paired runner selects
 the `select_star` container through the standard framework runner.
@@ -223,7 +241,7 @@ It requires view-compatible queries, `CREATE VIEW` and permission to alter
 schema `test`. CTEs are supported; ORDER BY requires TOP or OFFSET.
 
 The standalone SELECT-star package uses these built-in assertions for 50 independent
-query-contract procedures, mainly over `sys.objects`. Each compares a literal explicit
+query contracts in 18 procedures, mainly over `sys.objects`. Each compares an explicit
 projection with a SELECT-star query; the reference is not generated. The original 42
 cases are retained, with eight focused combination/alias/same-type additions. Four
 REPLACE cases also compare values to catch mistakes invisible in metadata. Basic tests

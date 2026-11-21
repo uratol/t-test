@@ -55,8 +55,11 @@ $cleanup = (($procedures.Keys | ForEach-Object {
 }) -join "`n") + "`nDROP SCHEMA [$schema]; DROP SCHEMA [$otherSchema]; DROP SCHEMA [$bracketSchema]; DROP SCHEMA [$trapSchema];"
 $catalogRun = Get-Content -Raw (Join-Path $PSScriptRoot '..\samples\catalog\run-compare-resultset-tests.sql')
 $stdevRun = Get-Content -Raw (Join-Path $PSScriptRoot '..\samples\stdev\run-stdev-tests.sql')
-$schemaRun = (Get-Content -Raw (Join-Path $PSScriptRoot '..\samples\select-star\run-select-star-tests.sql')).
-    Replace("N'select_star'", "N'$schema'")
+$schemaScript = Get-Content -Raw (Join-Path $PSScriptRoot '..\samples\select-star\run-select-star-tests.sql')
+# Test the runner's schema selection on native fixtures, not Fabric vector definitions.
+$schemaCall = [regex]::Match($schemaScript, "EXEC test\.run @test_schemas = N'select_star';").Value
+if (-not $schemaCall) { throw 'SELECT-star runner schema selection is missing.' }
+$schemaRun = "EXEC test.set_registration_scope N'global';`n" + $schemaCall.Replace("N'select_star'", "N'$schema'")
 
 function Assert-Selection([string] $Call, [string[]] $Expected, [int] $ErrorCode = 0) {
     $expectedRows = if ($Expected.Count) {
@@ -158,6 +161,7 @@ IF (SELECT COUNT(*) FROM test.test_vectors WHERE procedure_name = N'[$schema].[v
     THROW 51099, 'Vector registration outside tests schema failed.', 1;
 "@
     Assert-Selection "EXEC test.run @test_schemas = N'$schema', @test_names = N'%vector@case';" @('v1', 'v2')
+    Assert-Selection $schemaRun @('a', 'b', 'literal', 'v1', 'v2')
     Invoke-CheckSql @"
 -- Arrange
 --N/A

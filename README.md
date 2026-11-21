@@ -186,6 +186,12 @@ Unicode and long strings. Its geometry/geography variables are compared through
 `STAsText()` and SRID because `FOR JSON` cannot serialize spatial types directly.
 JSON/XML values are excluded; JSON is only the comparison transport.
 
+For agent-assisted test authoring, use the repository
+[T-TEST skill](.github/skills/t-test/SKILL.md) alongside the human-readable recipes.
+It covers test-shape selection, assertion choice, public registration APIs and sample
+install/run separation. [Repository instructions](.github/copilot-instructions.md)
+point agents to the skill; existing APIs, including `test.vector`, are unchanged.
+
 Test scripts are grouped by purpose:
 
 ```text
@@ -205,6 +211,7 @@ from other working directories because they resolve dependencies from their own 
 Install optional packages after `install.sql`, then execute their paired run scripts.
 The four optional installers create procedures without executing tests. The framework
 installer also adds missing standard global vectors without clearing existing registrations.
+The SELECT-star installer defines tests only; its run script resets and registers vectors.
 None of these packages requires new dimension domains. The main `install.sql`
 still installs the framework and runs basic verification.
 
@@ -213,7 +220,7 @@ still installs the framework and runs basic verification.
 | Regression | [install-framework-coverage-tests.sql](tests/regression/install-framework-coverage-tests.sql) | 16 | [run-framework-coverage-tests.sql](tests/regression/run-framework-coverage-tests.sql) | 49 scenario groups, including 33 basic/positive procedures (41 cases). |
 | Sample: catalog | [install-compare-resultset-tests.sql](tests/samples/catalog/install-compare-resultset-tests.sql) | 12 | [run-compare-resultset-tests.sql](tests/samples/catalog/run-compare-resultset-tests.sql) | All installed `sys`-schema tests: 13 shipped comparisons, including basic tables. |
 | Sample: STDEV | [install-stdev-tests.sql](tests/samples/stdev/install-stdev-tests.sql) | 27 | [run-stdev-tests.sql](tests/samples/stdev/run-stdev-tests.sql) | All installed `stdev` concept tests: 28 shipped cases, including basic. |
-| Sample: SELECT-star | [install-select-star-tests.sql](tests/samples/select-star/install-select-star-tests.sql) | 50 | [run-select-star-tests.sql](tests/samples/select-star/run-select-star-tests.sql) | Explicit-query oracles for SELECT-star projections; no CTAS tests. |
+| Sample: SELECT-star | [install-select-star-tests.sql](tests/samples/select-star/install-select-star-tests.sql) | 18 | [run-select-star-tests.sql](tests/samples/select-star/run-select-star-tests.sql) | 50 cases: 30 schema vectors, four REPLACE schema/data vectors and 16 static query contexts; no CTAS tests. |
 
 The standalone [vector-tests.sql](tests/regression/vector-tests.sql) and
 [dimension-tests.sql](tests/regression/dimension-tests.sql) remain execution suites with
@@ -236,6 +243,8 @@ Large dimension-limit cases can take several minutes.
 The check includes installation/uninstallation, all SQL regression suites, runner
 selection, catalog/STDEV samples and all 72 bundled procedures (80 cases). The
 SELECT-star package is installed but its Fabric-only syntax is not executed locally.
+Native packaging checks cover repeated installation, legacy retirement, unrelated
+registrations and the shared test's schema comparison.
 Test groups overlap; their counts must not be added into a coverage percentage.
 
 Additional focused checks:
@@ -245,6 +254,7 @@ Additional focused checks:
 | [assertion-tests.sql](tests/regression/assertion-tests.sql) | 62 independent cases: result values/counts/order, missing versus NULL properties, long results, query errors, schema signatures/types/lengths/scales, blank arguments and probe cleanup. |
 | [logger-tests.ps1](tests/regression/logger-tests.ps1) | 13 exact InfoMessage/PRINT checks: formatting, NULL/empty data, literal `%`, inline boundaries, long chunks, trailing spaces, Unicode and metadata tails. |
 | [installation-tests.ps1](tests/regression/installation-tests.ps1) | Rejected install/uninstall calls with XACT_ABORT OFF/ON, with and without outer CATCH; legacy retirement; repeated uninstall preserving user objects and both registry multisets. Run before optional installation. |
+| [select-star-package-tests.ps1](tests/regression/select-star-package-tests.ps1) | Definition-only installation, repeatable runner registration, unrelated registration preservation and native schema match/mismatch checks. Fabric operators are not executed. |
 
 `-MutationChecks` also replaces each of `assert_resultset_equals`, `get_query_schema`,
 `assert_schema_signature`, `assert_query_schemas_equal` and `log` with a signature-preserving `RETURN`
@@ -256,7 +266,8 @@ line/branch coverage or a comprehensive mutation score.
 
 The catalog and STDEV installers retain their existing procedure generators. Framework
 definitions remain conditionally generated after preflight. Run scripts do not install
-persistent procedures or register cases; disposable framework scenario helpers are created
+persistent procedures. The SELECT-star runner resets and registers its own vectors;
+disposable framework scenario helpers are created
 only during execution and then cleaned up.
 
 Run scripts discover their groups rather than repeat every procedure name. Catalog tests
@@ -377,7 +388,7 @@ nested query contexts.
 | Query contexts | Qualified and multiple stars, joins, derived queries, CTE chains, UNION ALL, DISTINCT, TOP/WHERE, empty inputs, correlated expressions, aggregates, PIVOT and UNPIVOT |
 | Value checks | Four REPLACE cases also use `test.assert_resultset_equals` on the single `test.run` catalog row, including a same-type replacement that metadata alone cannot detect |
 
-Both query strings are independently written, with the expected aliases, expressions
+Both projections are independently written, with the expected aliases, expressions
 and column order visible beside the operator being tested. The single-row value checks
 avoid row-order ambiguity and concurrent metadata-probe rows. Tests create no input
 tables, insert no fixtures and contain no transaction checks; schema assertions still
@@ -386,12 +397,34 @@ The four CTAS tests are removed, including their old procedures during package u
 This package no longer covers table materialization.
 
 Install the updated framework first, then the package; execute
-[run-select-star-tests.sql](tests/samples/select-star/run-select-star-tests.sql) to call the standard runner for its
-schema; the shipped package contains 50 procedures. Native runner reporting, failure limits,
-vectors and dimensions now apply. Nonzero RETURN codes retain the framework's existing
-non-error meaning. Individual calls such as
-`EXEC select_star.test_like_suffix;` still work. `EXEC test.run;` does not include this
-schema unless explicitly selected.
+[run-select-star-tests.sql](tests/samples/select-star/run-select-star-tests.sql) to call the
+standard runner for its schema. Eighteen procedures provide the same 50 cases:
+30 vectors call `select_star.test(@case_name, @expected_columns, @star_expression)`.
+The shared test builds both queries as `SELECT <projection> FROM sys.objects s`.
+The fixed alias supports qualified stars and correlated expressions with the same three inputs.
+Vectors show only the case label, explicit expected columns and tested star expression.
+Four REPLACE vectors call `select_star.test_data` with the same three arguments.
+It compares both schemas and values using the shared filter
+`WHERE object_id = OBJECT_ID('test.run')`, retaining one stable row and no ordering ambiguity.
+The 16 remaining query-context tests stay static because they need different FROM clauses
+or additional WHERE/ORDER BY clauses.
+Vector definitions live in the run script, after its targeted registration reset and
+before `test.run`. Each definition calls `test.vector` with the three positional arguments
+in `@arguments_sql`; there are no direct writes to the registry table.
+`QUOTED_IDENTIFIER OFF` allows double quotes around the SQL argument list. Apostrophes
+inside argument values must still be doubled. `QUOTED_IDENTIFIER ON` is restored afterward.
+
+Installation only defines procedures and retires the 34 replaced standalone procedures;
+it does not change registrations. Each run resets only the two shared tests' global
+registrations, defines their 34 vectors, then executes the suite.
+Repeated runs do not duplicate vectors.
+Unrelated objects and registration rows are preserved.
+This is a Fabric Warehouse-only package: its installer and paired runner use global
+registration scope only, without SQL Server session-context branches.
+Native reporting and failure limits still apply. Individual static calls such as
+`EXEC select_star.test_top_where;` still work. Direct calls to `select_star.test` or
+`select_star.test_data` require all three arguments.
+`EXEC test.run;` does not include this schema unless selected.
 
 For SQL Server, [installation-tests.ps1](tests/regression/installation-tests.ps1) verifies legacy-sentinel
 upgrade cleanup and preservation of caller transactions. It reinstalls the framework;
